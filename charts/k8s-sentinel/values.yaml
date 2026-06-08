@@ -47,6 +47,8 @@ ansible:
   remoteUser: light0
   hostKeyChecking: "False"
   sshArgs: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"
+  # Use node network so in-cluster pod can SSH to 192.168.50.x bare-metal IPs.
+  hostNetwork: false
 
 secrets:
   # Use an existing Secret (keys cursor-api-key, github-token).

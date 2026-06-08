@@ -371,7 +371,7 @@ class AnsibleRunner:
             "ansible",
             "-i",
             inventory,
-            "workers",
+            "k8s_cluster",
             "-m",
             "shell",
             "-a",
@@ -402,13 +402,22 @@ class AnsibleRunner:
                 continue
             parsed[host] = stats
 
-        if proc.returncode != 0 and not parsed:
+        host_entries = {k: v for k, v in parsed.items() if not k.startswith("_")}
+        if proc.returncode != 0 and not host_entries:
             logger.warning(
                 "Host disk usage collection failed (rc=%s): %s",
                 proc.returncode,
                 proc.stderr[-500:],
             )
             parsed["_error"] = f"ansible rc={proc.returncode}"
+        elif proc.returncode != 0:
+            logger.warning(
+                "Host disk usage partial (rc=%s, ok=%d): %s",
+                proc.returncode,
+                len(host_entries),
+                proc.stderr[-300:],
+            )
+            parsed["_partial"] = f"ansible rc={proc.returncode}"
         return parsed
 
 

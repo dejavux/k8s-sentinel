@@ -26,6 +26,10 @@ spec:
         spec:
           serviceAccountName: {{ include "k8s-sentinel.serviceAccountName" . }}
           restartPolicy: Never
+          {{- if and .Values.ansible.enabled .Values.ansible.hostNetwork }}
+          hostNetwork: true
+          dnsPolicy: ClusterFirstWithHostNet
+          {{- end }}
           containers:
             - name: sentinel
               image: {{ include "k8s-sentinel.image" . }}
