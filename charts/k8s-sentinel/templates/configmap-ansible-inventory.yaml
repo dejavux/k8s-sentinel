@@ -1,0 +1,12 @@
+{{- if and .Values.ansible.enabled .Values.ansible.inventoryContent (not .Values.ansible.inventoryConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "k8s-sentinel.fullname" . }}-ansible-inventory
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "k8s-sentinel.labels" . | nindent 4 }}
+data:
+  hosts.yml: |
+    {{- .Values.ansible.inventoryContent | nindent 4 }}
+{{- end }}

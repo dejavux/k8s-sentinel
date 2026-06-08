@@ -1,0 +1,16 @@
+# K8s Sentinel Python Dependencies
+
+# Kubernetes client
+kubernetes>=28.0.0
+
+# HTTP requests
+requests>=2.31.0
+
+# Date/time utilities
+python-dateutil>=2.8.2
+
+# YAML parsing
+pyyaml>=6.0.1
+
+# Logging
+colorlog>=6.7.0

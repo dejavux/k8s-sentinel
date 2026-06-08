@@ -1,0 +1,61 @@
+# Temporary: preload k8s-sentinel on each node (plain HTTP). Delete after ansible mirror is applied.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: k8s-sentinel-preload-image
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel-preload
+spec:
+  selector:
+    matchLabels:
+      app: k8s-sentinel-preload
+  template:
+    metadata:
+      labels:
+        app: k8s-sentinel-preload
+    spec:
+      hostPID: true
+      hostNetwork: true
+      tolerations:
+        - operator: Exists
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu
+                    operator: NotIn
+                    values:
+                      - "true"
+      containers:
+        - name: preload
+          image: alpine:3.20
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              REG="${REGISTRY_ENDPOINT:-10.101.22.227:5000}"
+              IMG="${REG}/k8s-sentinel:${SENTINEL_TAG:-v0.1.0-dev}"
+              apk add --no-cache curl >/dev/null
+              curl -sf "http://${REG}/v2/" >/dev/null
+              echo "Preloading ${IMG} on $(hostname)..."
+              nsenter -t 1 -m -u -i -n -- crictl pull "${IMG}" 2>/dev/null \
+                || nsenter -t 1 -m -u -i -n -- ctr -n k8s.io images pull --plain-http "${IMG}"
+              touch /host/tmp/k8s-sentinel-preload.done
+              sleep 3600
+          env:
+            - name: REGISTRY_ENDPOINT
+              value: "10.101.22.227:5000"
+            - name: SENTINEL_TAG
+              value: "v0.1.0-dev"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: host-root
+              mountPath: /host
+      volumes:
+        - name: host-root
+          hostPath:
+            path: /

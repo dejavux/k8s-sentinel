@@ -1,0 +1,128 @@
+---
+# DEPRECATED — use charts/k8s-sentinel (Helm). See manifests/DEPRECATED.md
+# Namespace (使用 kube-system)
+# K8s Sentinel 運行在 kube-system namespace
+
+---
+# ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-sentinel
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel
+    component: health-checker
+
+---
+# ClusterRole - 定義所需權限
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-sentinel
+  labels:
+    app: k8s-sentinel
+rules:
+  # 節點資訊（唯讀）
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+
+  # Pod 資訊和日誌（含清理 CI 已完成 Pod）
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+
+  # Events（用於檢查異常）
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+
+  # Deployments, DaemonSets, StatefulSets（唯讀）
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+
+  # ConfigMaps（讀取 + 修復 key 漂移）
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "patch", "update"]
+
+  # Secrets（僅讀取自己的 secrets）
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames: ["k8s-sentinel-secrets"]
+
+  # PersistentVolumes 和 PersistentVolumeClaims
+  - apiGroups: [""]
+    resources: ["persistentvolumes", "persistentvolumeclaims"]
+    verbs: ["get", "list"]
+
+  # Services
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list"]
+
+  # Namespaces
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-sentinel
+  labels:
+    app: k8s-sentinel
+subjects:
+  - kind: ServiceAccount
+    name: k8s-sentinel
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: k8s-sentinel
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role - namespace 內額外權限（如需要）
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-sentinel
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel
+rules:
+  # 可以建立 debug pods（用於節點檢查）
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete"]
+
+  # 可以建立 ConfigMaps（用於狀態記錄）
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "update", "patch"]
+
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-sentinel
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel
+subjects:
+  - kind: ServiceAccount
+    name: k8s-sentinel
+    namespace: kube-system
+roleRef:
+  kind: Role
+  name: k8s-sentinel
+  apiGroup: rbac.authorization.k8s.io

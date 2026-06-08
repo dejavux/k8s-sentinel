@@ -1,0 +1,188 @@
+# Sentinel image release — buildkitd daemon + registry cache (fallback: daemonless)
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: sentinel-buildkit-build
+  namespace: ci-tenant-infra-bootstrap
+  labels:
+    app.kubernetes.io/part-of: k8s-sentinel
+spec:
+  description: Build and push k8s-sentinel via buildkitd (registry cache + PVC cache).
+  params:
+    - name: image
+      type: string
+    - name: cache-ref
+      type: string
+      description: registry.../buildkit-cache/k8s-sentinel
+    - name: buildkit-addr
+      type: string
+      default: tcp://buildkitd.buildkit.svc.cluster.local:1234
+    - name: dockerfile
+      type: string
+      default: Dockerfile
+    - name: context-subpath
+      type: string
+      default: src/60_apps/k8s-sentinel
+  workspaces:
+    - name: source
+    - name: dockerconfig
+  steps:
+    - name: build
+      image: moby/buildkit:v0.13.2
+      workingDir: $(workspaces.source.path)/$(params.context-subpath)
+      securityContext:
+        privileged: true
+      computeResources:
+        requests:
+          cpu: "1"
+          memory: "4Gi"
+          ephemeral-storage: 10Gi
+        limits:
+          cpu: "4"
+          memory: "8Gi"
+          ephemeral-storage: 30Gi
+      env:
+        - name: DOCKER_CONFIG
+          value: $(workspaces.dockerconfig.path)
+      script: |
+        #!/bin/sh
+        set -eu
+        CONTEXT="$(workspaces.source.path)/$(params.context-subpath)"
+        CONTEXT="${CONTEXT%/}"
+        IMAGE="$(params.image)"
+        CACHE="$(params.cache-ref)"
+        BUILDKIT_ADDR="$(params.buildkit-addr)"
+        DOCKERFILE="$(params.dockerfile)"
+
+        build_with_cache() {
+          mode="$1"
+          shift
+          if [ "$mode" = "daemon" ]; then
+            buildctl --addr="${BUILDKIT_ADDR}" build \
+              --frontend dockerfile.v0 \
+              --local context="${CONTEXT}" \
+              --local dockerfile="${CONTEXT}" \
+              --opt "filename=${DOCKERFILE}" \
+              --import-cache "type=registry,ref=${CACHE},registry.insecure=true" \
+              --export-cache "type=registry,ref=${CACHE},mode=max,registry.insecure=true" \
+              --output "type=image,name=${IMAGE},push=true,registry.insecure=true" \
+              "$@"
+          else
+            buildctl-daemonless.sh build \
+              --frontend dockerfile.v0 \
+              --local context="${CONTEXT}" \
+              --local dockerfile="${CONTEXT}" \
+              --opt "filename=${DOCKERFILE}" \
+              --import-cache "type=registry,ref=${CACHE},registry.insecure=true" \
+              --export-cache "type=registry,ref=${CACHE},mode=max,registry.insecure=true" \
+              --output "type=image,name=${IMAGE},push=true,registry.insecure=true" \
+              "$@"
+          fi
+        }
+
+        if buildctl --addr="${BUILDKIT_ADDR}" debug workers >/dev/null 2>&1; then
+          echo "→ build via buildkitd ${BUILDKIT_ADDR} (cache: ${CACHE})"
+          build_with_cache daemon
+        else
+          echo "⚠ buildkitd unreachable at ${BUILDKIT_ADDR}; fallback to daemonless"
+          build_with_cache daemonless
+        fi
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: sentinel-git-clone
+  namespace: ci-tenant-infra-bootstrap
+  labels:
+    app.kubernetes.io/part-of: k8s-sentinel
+spec:
+  params:
+    - name: url
+      type: string
+    - name: revision
+      type: string
+  workspaces:
+    - name: output
+    - name: basic-auth
+  steps:
+    - name: clone
+      image: docker.io/library/alpine:3.20
+      workingDir: $(workspaces.output.path)
+      computeResources:
+        requests:
+          ephemeral-storage: 2Gi
+        limits:
+          ephemeral-storage: 8Gi
+      env:
+        - name: BASIC_AUTH_PATH
+          value: $(workspaces.basic-auth.path)
+      script: |
+        #!/bin/sh
+        set -eu
+        apk add --no-cache git
+        CLONE_URL="$(params.url)"
+        if [ -f "${BASIC_AUTH_PATH}/token" ]; then
+          GIT_TOKEN=$(cat "${BASIC_AUTH_PATH}/token")
+          case "${CLONE_URL}" in
+            https://github.com/*)
+              CLONE_URL="https://x-access-token:${GIT_TOKEN}@${CLONE_URL#https://}"
+              ;;
+          esac
+        fi
+        git clone "${CLONE_URL}" "$(workspaces.output.path)/src"
+        cd "$(workspaces.output.path)/src"
+        git checkout -q "$(params.revision)"
+        git log -1 --oneline
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: k8s-sentinel-release
+  namespace: ci-tenant-infra-bootstrap
+  labels:
+    app.kubernetes.io/part-of: k8s-sentinel
+spec:
+  params:
+    - name: repo-url
+      default: https://github.com/dejavux/infra-bootstrap.git
+    - name: revision
+    - name: registry
+      default: registry.docker-registry-internal.svc.cluster.local:5000
+    - name: image-tag
+      default: v0.1.0-dev
+    - name: buildkit-addr
+      default: tcp://buildkitd.buildkit.svc.cluster.local:1234
+  workspaces:
+    - name: source
+    - name: git-credentials
+    - name: dockerconfig
+  tasks:
+    - name: fetch-source
+      taskRef:
+        name: sentinel-git-clone
+      params:
+        - name: url
+          value: $(params.repo-url)
+        - name: revision
+          value: $(params.revision)
+      workspaces:
+        - name: output
+          workspace: source
+        - name: basic-auth
+          workspace: git-credentials
+    - name: build-image
+      runAfter: [fetch-source]
+      taskRef:
+        name: sentinel-buildkit-build
+      params:
+        - name: image
+          value: $(params.registry)/k8s-sentinel:$(params.image-tag)
+        - name: cache-ref
+          value: $(params.registry)/buildkit-cache/k8s-sentinel
+        - name: buildkit-addr
+          value: $(params.buildkit-addr)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: dockerconfig
+          workspace: dockerconfig

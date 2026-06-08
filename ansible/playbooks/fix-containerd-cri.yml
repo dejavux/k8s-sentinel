@@ -1,0 +1,59 @@
+---
+# Fix containerd CRI when config_path + registry.mirrors conflict breaks the CRI plugin.
+# Portable: ships with k8s-sentinel (public repo); limit with --extra-vars target_hosts=cp1,worker1
+
+- name: Fix containerd CRI registry config
+  hosts: "{{ target_hosts | default('k8s_cluster') }}"
+  become: true
+  vars:
+    registry_endpoint: "{{ registry_endpoint | default('10.101.22.227:5000') }}"
+    registry_svc_host: >-
+      {{ registry_svc_host
+         | default('registry.docker-registry-internal.svc.cluster.local:5000') }}
+  tasks:
+    - name: Remove legacy mirrors block (conflicts with config_path)
+      ansible.builtin.blockinfile:
+        path: /etc/containerd/config.toml
+        marker: "# {mark} ANSIBLE MANAGED - INCLUSTER REGISTRY MIRROR"
+        state: absent
+      failed_when: false
+
+    - name: Install certs.d hosts.toml for registry ClusterIP
+      ansible.builtin.copy:
+        dest: "/etc/containerd/certs.d/{{ registry_endpoint }}/hosts.toml"
+        mode: "0644"
+        content: |
+          server = "http://{{ registry_endpoint }}"
+
+          [host."http://{{ registry_endpoint }}"]
+            capabilities = ["pull", "resolve", "push"]
+
+    - name: Install certs.d hosts.toml for in-cluster registry Service DNS
+      ansible.builtin.copy:
+        dest: "/etc/containerd/certs.d/{{ registry_svc_host }}/hosts.toml"
+        mode: "0644"
+        content: |
+          server = "http://{{ registry_svc_host }}"
+
+          [host."http://{{ registry_svc_host }}"]
+            capabilities = ["pull", "resolve", "push"]
+
+    - name: Restart containerd
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+
+    - name: Wait for containerd socket
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: Verify CRI endpoint
+      ansible.builtin.command: crictl info
+      register: cri_info
+      changed_when: false
+      failed_when: cri_info.rc != 0
+
+    - name: Restart kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted

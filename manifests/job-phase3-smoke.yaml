@@ -1,0 +1,66 @@
+---
+# Phase 3 E2E: AnsibleRunner prune dry-run on one worker.
+# Requires SSH from pod to workers — mount deploy key:
+#   kubectl create secret generic k8s-sentinel-ansible-ssh -n kube-system \
+#     --from-file=id_rsa=$HOME/.ssh/id_rsa --dry-run=client -o yaml | kubectl apply -f -
+#
+# Usage:
+#   kubectl apply -f 60_apps/k8s-sentinel/manifests/job-phase3-smoke.yaml
+#   kubectl logs -n kube-system -l phase=phase3-smoke -f
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k8s-sentinel-phase3-smoke
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel
+    phase: phase3-smoke
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: k8s-sentinel
+        phase: phase3-smoke
+    spec:
+      serviceAccountName: k8s-sentinel
+      restartPolicy: Never
+      containers:
+        - name: smoke
+          image: registry-internal.3q.fi/k8s-sentinel:v0.1.0-dev
+          imagePullPolicy: Always
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: github-token
+            - name: SENTINEL_PHASE3_E2E_LIMIT
+              value: worker7
+            - name: SENTINEL_PHASE3_E2E_DRY_RUN
+              value: "true"
+            - name: ANSIBLE_HOST_KEY_CHECKING
+              value: "False"
+          volumeMounts:
+            - name: ssh-key
+              mountPath: /root/.ssh
+              readOnly: true
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              set -euo pipefail
+              chmod 700 /root/.ssh
+              chmod 600 /root/.ssh/id_rsa
+              git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/dejavux/infra-bootstrap.git" /workspace/infra-bootstrap
+              export SENTINEL_INFRA_ROOT=/workspace/infra-bootstrap
+              export ANSIBLE_INVENTORY=/workspace/infra-bootstrap/40_k8s/inventory/hosts.yml
+              cd /workspace/infra-bootstrap/60_apps/k8s-sentinel/scripts
+              python3 smoke/phase3_ansible_e2e.py
+              echo "Phase 3 smoke OK"
+      volumes:
+        - name: ssh-key
+          secret:
+            secretName: k8s-sentinel-ansible-ssh
+            optional: true

@@ -1,0 +1,1 @@
+"""GitOps integration for Sentinel."""

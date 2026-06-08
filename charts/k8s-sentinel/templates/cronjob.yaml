@@ -1,0 +1,150 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "k8s-sentinel.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "k8s-sentinel.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.schedule | quote }}
+  concurrencyPolicy: {{ .Values.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.failedJobsHistoryLimit }}
+  startingDeadlineSeconds: {{ .Values.startingDeadlineSeconds }}
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "k8s-sentinel.selectorLabels" . | nindent 8 }}
+    spec:
+      ttlSecondsAfterFinished: {{ .Values.ttlSecondsAfterFinished }}
+      backoffLimit: {{ .Values.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "k8s-sentinel.selectorLabels" . | nindent 12 }}
+        spec:
+          serviceAccountName: {{ include "k8s-sentinel.serviceAccountName" . }}
+          restartPolicy: Never
+          containers:
+            - name: sentinel
+              image: {{ include "k8s-sentinel.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - {{ .Values.command }}
+                - --modules
+                {{- range (splitList "," .Values.config.modules) }}
+                - {{ trim . }}
+                {{- end }}
+                {{- if .Values.config.autoFix }}
+                - --auto-fix
+                {{- end }}
+              env:
+                - name: SENTINEL_MODE
+                  value: {{ .Values.command | quote }}
+                - name: SENTINEL_MODULES
+                  value: {{ .Values.config.modules | quote }}
+                - name: SENTINEL_AUTO_FIX
+                  value: {{ .Values.config.autoFix | quote }}
+                - name: SENTINEL_AUTO_PR
+                  value: {{ .Values.config.autoPR | quote }}
+                - name: SENTINEL_AUTO_MERGE
+                  value: {{ .Values.config.autoMerge | quote }}
+                - name: SENTINEL_DISK_ANSIBLE
+                  value: {{ .Values.config.diskAnsible | quote }}
+                - name: SENTINEL_CONTAINERD_ANSIBLE
+                  value: {{ .Values.config.containerdAnsible | quote }}
+                - name: SENTINEL_DISK_WARN_PERCENT
+                  value: {{ .Values.config.diskWarnPercent | quote }}
+                - name: SENTINEL_DISK_ERROR_PERCENT
+                  value: {{ .Values.config.diskErrorPercent | quote }}
+                - name: SENTINEL_DISK_WARN_FAIL
+                  value: {{ .Values.config.diskWarnFail | quote }}
+                - name: SENTINEL_INFRA_ROOT
+                  value: {{ .Values.config.infraRoot | quote }}
+                - name: SENTINEL_PACKAGE_ROOT
+                  value: {{ .Values.config.packageRoot | quote }}
+                - name: SENTINEL_OUTPUT_FILE
+                  value: {{ .Values.config.outputFile | quote }}
+                {{- if .Values.registry.endpoint }}
+                - name: SENTINEL_REGISTRY_ENDPOINT
+                  value: {{ .Values.registry.endpoint | quote }}
+                {{- end }}
+                {{- if .Values.registry.svcHost }}
+                - name: SENTINEL_REGISTRY_SVC_HOST
+                  value: {{ .Values.registry.svcHost | quote }}
+                {{- end }}
+                {{- if or .Values.secrets.create .Values.secrets.existingSecret .Values.onepassword.enabled }}
+                - name: CURSOR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "k8s-sentinel.secretName" . }}
+                      key: cursor-api-key
+                      optional: true
+                - name: GITHUB_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "k8s-sentinel.secretName" . }}
+                      key: github-token
+                      optional: true
+                {{- end }}
+                {{- if .Values.gitops.enabled }}
+                - name: SENTINEL_GITHUB_REPO
+                  value: {{ .Values.gitops.githubRepo | quote }}
+                - name: GIT_AUTHOR_NAME
+                  value: {{ .Values.gitops.gitAuthorName | quote }}
+                - name: GIT_AUTHOR_EMAIL
+                  value: {{ .Values.gitops.gitAuthorEmail | quote }}
+                - name: GIT_COMMITTER_NAME
+                  value: {{ .Values.gitops.gitCommitterName | quote }}
+                - name: GIT_COMMITTER_EMAIL
+                  value: {{ .Values.gitops.gitCommitterEmail | quote }}
+                - name: NODE_OPTIONS
+                  value: {{ .Values.gitops.nodeOptions | quote }}
+                {{- end }}
+                {{- if .Values.ansible.enabled }}
+                - name: ANSIBLE_INVENTORY
+                  value: /ansible/inventory/hosts.yml
+                - name: ANSIBLE_HOST_KEY_CHECKING
+                  value: {{ .Values.ansible.hostKeyChecking | quote }}
+                - name: ANSIBLE_REMOTE_USER
+                  value: {{ .Values.ansible.remoteUser | quote }}
+                - name: ANSIBLE_SSH_ARGS
+                  value: {{ .Values.ansible.sshArgs | quote }}
+                {{- end }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+                {{- if .Values.ansible.enabled }}
+                - name: ansible-inventory
+                  mountPath: /ansible/inventory
+                  readOnly: true
+                - name: ansible-ssh
+                  mountPath: /root/.ssh
+                  readOnly: true
+                {{- end }}
+          volumes:
+            - name: workspace
+              emptyDir:
+                sizeLimit: {{ .Values.workspace.sizeLimit }}
+            {{- if .Values.ansible.enabled }}
+            - name: ansible-inventory
+              configMap:
+                name: {{ .Values.ansible.inventoryConfigMap | default (printf "%s-ansible-inventory" (include "k8s-sentinel.fullname" .)) }}
+                optional: true
+            - name: ansible-ssh
+              secret:
+                secretName: {{ .Values.ansible.sshSecret }}
+                optional: true
+                defaultMode: 0600
+            {{- end }}
+          {{- with .Values.topologySpreadConstraints }}
+          topologySpreadConstraints:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

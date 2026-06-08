@@ -1,0 +1,17 @@
+apiVersion: v2
+name: k8s-sentinel
+description: Automated Kubernetes cluster health checks and optional remediation
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+keywords:
+  - kubernetes
+  - monitoring
+  - remediation
+  - ansible
+home: https://github.com/dejavux/k8s-sentinel
+sources:
+  - https://github.com/dejavux/k8s-sentinel
+maintainers:
+  - name: Infrastructure Team
+    email: team@3q.fi

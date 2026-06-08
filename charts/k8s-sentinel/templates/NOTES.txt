@@ -1,0 +1,14 @@
+K8s Sentinel has been installed.
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Values.namespace }}
+Schedule: {{ .Values.schedule }}
+Modules: {{ .Values.config.modules }}
+Auto-fix: {{ .Values.config.autoFix }}
+
+Manual check:
+  kubectl create job --from=cronjob/{{ include "k8s-sentinel.fullname" . }} \
+    {{ include "k8s-sentinel.fullname" . }}-manual-$(date +%s) -n {{ .Values.namespace }}
+
+Logs:
+  kubectl logs -n {{ .Values.namespace }} -l app.kubernetes.io/name={{ include "k8s-sentinel.name" . }} --tail=100

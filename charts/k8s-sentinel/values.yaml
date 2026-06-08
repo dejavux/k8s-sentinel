@@ -1,0 +1,114 @@
+# Default values — safe for public / check-only installs.
+# Cluster-specific overlays: values-3q-prod.yaml
+
+nameOverride: ""
+fullnameOverride: ""
+
+namespace: kube-system
+
+image:
+  repository: ghcr.io/dejavux/k8s-sentinel
+  tag: v0.2.0
+  pullPolicy: IfNotPresent
+
+schedule: "*/30 * * * *"
+concurrencyPolicy: Forbid
+successfulJobsHistoryLimit: 3
+failedJobsHistoryLimit: 3
+startingDeadlineSeconds: 300
+ttlSecondsAfterFinished: 86400
+activeDeadlineSeconds: 2700
+backoffLimit: 0
+
+# CronJob container command (check | fix)
+command: check
+
+config:
+  modules: runc,disk,pods,components,containerd,kubelet
+  autoFix: false
+  autoPR: false
+  autoMerge: false
+  diskWarnPercent: 75
+  diskErrorPercent: 85
+  diskWarnFail: true
+  diskAnsible: false
+  containerdAnsible: true
+  infraRoot: /workspace/infra-bootstrap
+  packageRoot: /app
+  outputFile: /workspace/sentinel-results.json
+
+ansible:
+  enabled: false
+  # Existing ConfigMap name (key hosts.yml). Ignored if inventoryContent set.
+  inventoryConfigMap: ""
+  # Inline inventory; chart creates ConfigMap when non-empty.
+  inventoryContent: ""
+  sshSecret: k8s-sentinel-ansible-ssh
+  remoteUser: light0
+  hostKeyChecking: "False"
+  sshArgs: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"
+
+secrets:
+  # Use an existing Secret (keys cursor-api-key, github-token).
+  existingSecret: ""
+  create: false
+  cursorApiKey: ""
+  githubToken: ""
+
+onepassword:
+  enabled: false
+  itemPath: vaults/Infra-CI/items/k8s-sentinel-credentials
+
+gitops:
+  enabled: false
+  githubRepo: ""
+  gitAuthorName: K8s Sentinel Bot
+  gitAuthorEmail: sentinel@example.local
+  gitCommitterName: K8s Sentinel Bot
+  gitCommitterEmail: sentinel@example.local
+  nodeOptions: "--max-old-space-size=1024"
+
+registry:
+  endpoint: ""
+  svcHost: registry.docker-registry-internal.svc.cluster.local:5000
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+    ephemeral-storage: 512Mi
+  limits:
+    cpu: 500m
+    memory: 1536Mi
+    ephemeral-storage: 3Gi
+
+workspace:
+  sizeLimit: 1Gi
+
+serviceAccount:
+  create: true
+  name: k8s-sentinel
+  annotations: {}
+
+rbac:
+  create: true
+
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: nvidia.com/gpu
+              operator: NotIn
+              values:
+                - "true"
+            - key: node.kubernetes.io/disk-pressure
+              operator: DoesNotExist
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: k8s-sentinel

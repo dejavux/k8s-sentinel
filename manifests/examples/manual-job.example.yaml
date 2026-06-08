@@ -1,0 +1,213 @@
+---
+# K8s Sentinel 手動觸發 Job 範例
+#
+# 使用方式：
+#   1. 複製此檔案並修改參數
+#   2. kubectl apply -f manual-job.yaml
+#   3. kubectl logs -f job/sentinel-manual-check
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sentinel-manual-check
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel
+    component: health-checker
+    trigger: manual
+spec:
+  # Job 完成後保留 1 小時
+  ttlSecondsAfterFinished: 3600
+
+  # 失敗後不重試
+  backoffLimit: 0
+
+  template:
+    metadata:
+      labels:
+        app: k8s-sentinel
+        component: health-checker
+        trigger: manual
+    spec:
+      serviceAccountName: k8s-sentinel
+      restartPolicy: Never
+
+      containers:
+        - name: sentinel
+          image: dejavux/k8s-sentinel:v0.1.0-dev
+          imagePullPolicy: IfNotPresent
+
+          # 執行命令（可修改）
+          command: ["python3", "/app/scripts/main.py"]
+          args:
+            - "check"            # 命令: check / fix / list
+            - "--modules"
+            - "all"              # 模組: all / runc / containerd / kubelet
+            # - "--auto-fix"     # 取消註解以啟用自動修復
+
+          env:
+            # Cursor API Key（可選）
+            - name: CURSOR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: cursor-api-key
+                  optional: true
+
+            # GitHub Token
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: github-token
+
+            # 執行模式
+            - name: SENTINEL_MODE
+              value: "check"
+
+            # 自動修復（預設關閉）
+            - name: SENTINEL_AUTO_FIX
+              value: "false"
+
+            # 自動建立 PR（預設關閉）
+            - name: SENTINEL_AUTO_PR
+              value: "false"
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+
+      volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: 1Gi
+
+---
+# 範例 2: 僅檢查 runc 模組
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sentinel-check-runc-only
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel
+    component: health-checker
+    trigger: manual
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 0
+
+  template:
+    metadata:
+      labels:
+        app: k8s-sentinel
+    spec:
+      serviceAccountName: k8s-sentinel
+      restartPolicy: Never
+
+      containers:
+        - name: sentinel
+          image: dejavux/k8s-sentinel:v0.1.0-dev
+          args:
+            - "check"
+            - "--modules"
+            - "runc"           # 僅檢查 runc
+
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: github-token
+
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+
+      volumes:
+        - name: workspace
+          emptyDir: {}
+
+---
+# 範例 3: 執行修復（啟用自動修復和 PR）
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sentinel-fix-with-pr
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel
+    component: fixer
+    trigger: manual
+spec:
+  ttlSecondsAfterFinished: 7200  # 保留 2 小時
+  backoffLimit: 0
+
+  template:
+    metadata:
+      labels:
+        app: k8s-sentinel
+    spec:
+      serviceAccountName: k8s-sentinel
+      restartPolicy: Never
+
+      containers:
+        - name: sentinel
+          image: dejavux/k8s-sentinel:v0.1.0-dev
+          args:
+            - "fix"            # 執行修復
+            - "--modules"
+            - "all"
+
+          env:
+            # 啟用 Cursor SDK
+            - name: CURSOR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: cursor-api-key
+
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: github-token
+
+            # 啟用自動修復
+            - name: SENTINEL_AUTO_FIX
+              value: "true"
+
+            # 啟用自動 PR
+            - name: SENTINEL_AUTO_PR
+              value: "true"
+
+            # Git 配置
+            - name: GIT_AUTHOR_NAME
+              value: "K8s Sentinel Bot"
+            - name: GIT_AUTHOR_EMAIL
+              value: "sentinel@infra-bootstrap.local"
+
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+
+      volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: 2Gi

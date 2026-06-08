@@ -1,0 +1,70 @@
+---
+# Phase 4 smoke: verify gh auth + draft PR create/close (manual apply).
+# Usage:
+#   kubectl apply -f 60_apps/k8s-sentinel/manifests/job-phase4-smoke.yaml
+#   kubectl logs -n kube-system -l app=k8s-sentinel,phase=phase4-smoke -f
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k8s-sentinel-phase4-smoke
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel
+    phase: phase4-smoke
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: k8s-sentinel
+        phase: phase4-smoke
+    spec:
+      serviceAccountName: k8s-sentinel
+      restartPolicy: Never
+      containers:
+        - name: smoke
+          image: registry-internal.3q.fi/k8s-sentinel:v0.1.0-dev
+          imagePullPolicy: Always
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: github-token
+            - name: CURSOR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: cursor-api-key
+                  optional: true
+            - name: GH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: github-token
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              gh auth status
+              gh api user -q .login
+              git config --global user.email "sentinel@infra-bootstrap.local"
+              git config --global user.name "K8s Sentinel Bot"
+              REPO=dejavux/infra-bootstrap
+              BR="sentinel/phase4-smoke-$(date +%s)"
+              git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git" /tmp/repo
+              cd /tmp/repo
+              git checkout -b "$BR"
+              git commit --allow-empty -m "chore(sentinel): phase4 smoke test"
+              git push -u origin "$BR"
+              PR_URL=$(gh pr create \
+                --repo "$REPO" \
+                --title "chore(sentinel): phase4 smoke test" \
+                --body "Automated Phase 4 smoke test; will be closed immediately." \
+                --base main \
+                --head "$BR" \
+                --draft)
+              echo "Created draft PR: ${PR_URL}"
+              gh pr close "$PR_URL" --repo "$REPO" --delete-branch
+              echo "Phase 4 smoke OK"

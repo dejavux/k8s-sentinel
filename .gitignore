@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Workspace
+workspace/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Secrets (double-check these are not committed!)
+*credentials*.json
+*.key
+*.pem
+
+# Temporary files
+*.tmp
+*.swp
+*~

@@ -1,0 +1,226 @@
+---
+# DEPRECATED — use charts/k8s-sentinel (Helm). See manifests/DEPRECATED.md
+# K8s Sentinel CronJob
+# 每 30 分鐘執行一次叢集健康檢查
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: k8s-sentinel
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel
+    component: health-checker
+spec:
+  # 每 30 分鐘執行
+  schedule: "*/30 * * * *"
+
+  # 不允許併發執行（避免重複修復）
+  concurrencyPolicy: Forbid
+
+  # 保留最近 3 次成功和失敗的 Job
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+  # 如果錯過時間超過 5 分鐘，不執行
+  startingDeadlineSeconds: 300
+
+  jobTemplate:
+    metadata:
+      labels:
+        app: k8s-sentinel
+        component: health-checker
+    spec:
+      # Job 完成後保留 24 小時
+      ttlSecondsAfterFinished: 86400
+
+      # 失敗後不重試（避免重複修復）
+      backoffLimit: 0
+
+      # 避免異常卡住佔據並發槽；略大於 Cron 間隔以利觀察
+      activeDeadlineSeconds: 2700
+
+      template:
+        metadata:
+          labels:
+            app: k8s-sentinel
+            component: health-checker
+        spec:
+          serviceAccountName: k8s-sentinel
+          restartPolicy: Never
+
+          # 容器配置
+          containers:
+            - name: sentinel
+              image: dejavux/k8s-sentinel:v0.1.0-dev
+              # IfNotPresent: use node-local image after preload or containerd HTTP mirror.
+              imagePullPolicy: IfNotPresent
+
+              # Dockerfile ENTRYPOINT: python3 /app/scripts/main.py
+              args:
+                - check
+                - --modules
+                - runc
+                - disk
+                - pods
+                - components
+                - containerd
+                - kubelet
+
+              # 環境變數
+              env:
+                # Cursor API Key（可選）
+                - name: CURSOR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: k8s-sentinel-secrets
+                      key: cursor-api-key
+                      optional: true
+
+                # GitHub Token（必需，用於 PR）
+                - name: GITHUB_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: k8s-sentinel-secrets
+                      key: github-token
+                      optional: true
+
+                # 執行模式（check / fix）
+                - name: SENTINEL_MODE
+                  value: "check"
+
+                # 要執行的模組（Phase 1+: runc + disk + pods）
+                - name: SENTINEL_MODULES
+                  value: "runc,disk,pods,components,containerd,kubelet"
+
+                # 是否自動修復
+                - name: SENTINEL_AUTO_FIX
+                  value: "true"
+
+                # Phase 3: host-level ephemeral prune via Ansible (needs SSH in image)
+                - name: SENTINEL_DISK_ANSIBLE
+                  value: "true"
+
+                - name: SENTINEL_DISK_WARN_PERCENT
+                  value: "75"
+
+                - name: SENTINEL_DISK_ERROR_PERCENT
+                  value: "85"
+
+                - name: SENTINEL_DISK_WARN_FAIL
+                  value: "true"
+
+                - name: ANSIBLE_INVENTORY
+                  value: "/ansible/inventory/hosts.yml"
+
+                - name: ANSIBLE_HOST_KEY_CHECKING
+                  value: "False"
+
+                - name: ANSIBLE_REMOTE_USER
+                  value: "light0"
+
+                - name: ANSIBLE_SSH_ARGS
+                  value: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"
+
+                - name: SENTINEL_INFRA_ROOT
+                  value: "/workspace/infra-bootstrap"
+
+                - name: SENTINEL_PACKAGE_ROOT
+                  value: "/app"
+
+                - name: SENTINEL_CONTAINERD_ANSIBLE
+                  value: "true"
+
+                # Pod manifest 漂移時用 Cursor SDK 開 PR
+                - name: SENTINEL_AUTO_PR
+                  value: "true"
+
+                # 白名單內低風險 PR：bot 自動 approve + squash merge
+                - name: SENTINEL_AUTO_MERGE
+                  value: "true"
+
+                - name: SENTINEL_GITHUB_REPO
+                  value: "dejavux/infra-bootstrap"
+
+                # Git 配置
+                - name: GIT_AUTHOR_NAME
+                  value: "K8s Sentinel Bot"
+                - name: GIT_AUTHOR_EMAIL
+                  value: "sentinel@infra-bootstrap.local"
+                - name: GIT_COMMITTER_NAME
+                  value: "K8s Sentinel Bot"
+                - name: GIT_COMMITTER_EMAIL
+                  value: "sentinel@infra-bootstrap.local"
+
+                # Cursor SDK (tsx worker) needs headroom; keep under memory limit
+                - name: NODE_OPTIONS
+                  value: "--max-old-space-size=1024"
+
+              # 資源限制（含 ephemeral：供 kubelet eviction／Scheduler 統計，降低與 DiskPressure 節點競爭失序）
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "512Mi"
+                  ephemeral-storage: "512Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "1536Mi"
+                  ephemeral-storage: "3Gi"
+
+              # Volume mounts
+              volumeMounts:
+                # Git repo workspace
+                - name: workspace
+                  mountPath: /workspace
+
+                # Ansible inventory（唯讀）
+                - name: ansible-inventory
+                  mountPath: /ansible/inventory
+                  readOnly: true
+
+                # SSH key for Ansible host prune (optional secret)
+                - name: ansible-ssh
+                  mountPath: /root/.ssh
+                  readOnly: true
+
+          # Volumes
+          volumes:
+            # Workspace for git operations
+            - name: workspace
+              emptyDir:
+                sizeLimit: 1Gi
+
+            # Ansible inventory（從 ConfigMap）
+            - name: ansible-inventory
+              configMap:
+                name: k8s-sentinel-ansible-inventory
+                optional: true
+
+            - name: ansible-ssh
+              secret:
+                secretName: k8s-sentinel-ansible-ssh
+                optional: true
+                defaultMode: 0600
+
+          # 盡量攤到其他 worker，降低總打在同一個小根盤 worker 的機率
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  app: k8s-sentinel
+                  component: health-checker
+
+          # Node selector（避免 GPU 節點與 DiskPressure 節點）
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: nvidia.com/gpu
+                        operator: NotIn
+                        values:
+                          - "true"
+                      - key: node.kubernetes.io/disk-pressure
+                        operator: DoesNotExist
