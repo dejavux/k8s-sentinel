@@ -22,7 +22,7 @@ spec:
       default: Dockerfile
     - name: context-subpath
       type: string
-      default: src/60_apps/k8s-sentinel
+      default: src
   workspaces:
     - name: source
     - name: dockerconfig
@@ -144,7 +144,7 @@ metadata:
 spec:
   params:
     - name: repo-url
-      default: https://github.com/dejavux/infra-bootstrap.git
+      default: https://github.com/dejavux/k8s-sentinel.git
     - name: revision
     - name: registry
       default: registry.docker-registry-internal.svc.cluster.local:5000

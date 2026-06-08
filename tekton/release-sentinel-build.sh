@@ -12,7 +12,8 @@ ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 NS="${SENTINEL_TEKTON_NS:-ci-tenant-infra-bootstrap}"
 REGISTRY="${SENTINEL_REGISTRY:-registry.docker-registry-internal.svc.cluster.local:5000}"
 TAG="${1:-v0.1.0-dev}"
-REVISION="${REVISION:-$(git -C "$ROOT" rev-parse HEAD)}"
+SENTINEL_SRC="${ROOT}/60_apps/k8s-sentinel"
+REVISION="${REVISION:-$(git -C "$SENTINEL_SRC" rev-parse HEAD)}"
 TIMEOUT="${SENTINEL_RELEASE_TIMEOUT:-1800s}"
 # Faster feedback than shared fuqi default (120s)
 export FUQI_K8S_WAIT_POLL_SEC="${SENTINEL_K8S_WAIT_POLL_SEC:-15}"
@@ -110,4 +111,4 @@ else
 fi
 
 echo "✅ pushed ${REGISTRY}/k8s-sentinel:${TAG}"
-echo "   update deploy: SENTINEL_IMAGE=${REGISTRY}/k8s-sentinel:${TAG} bash 60_apps/k8s-sentinel/deploy.sh"
+echo "   update deploy: make deploy APP=sentinel TAG=${TAG}"
