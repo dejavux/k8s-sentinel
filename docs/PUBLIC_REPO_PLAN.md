@@ -6,8 +6,8 @@
 
 | 項目 | 決定 |
 |------|------|
-| Repo | `dejavux/k8s-sentinel`，**先 private**，Phase A 完成後再 public |
-| Phase A 優先 | **Helm chart**（已 scaffold：`charts/k8s-sentinel/`） |
+| Repo | `dejavux/k8s-sentinel`，**private 已建立**（2026-06-08），Phase A 完成後再 public |
+| Phase A 優先 | **Helm chart**（`charts/k8s-sentinel/`；`make deploy APP=sentinel` → `deploy.sh` Helm wrapper） |
 | 授權 | **Apache-2.0**（公開時加入 `LICENSE`） |
 
 **目標**: 將 `k8s-sentinel` 抽成獨立 GitHub repo，讓 `infra-bootstrap`、`fuqi-asset-manager` 及其他專案以固定介面安裝與擴充。
@@ -20,7 +20,7 @@
 |------|------|----------------|
 | 核心檢查 | runc / disk / pods / components / **containerd / kubelet** | `resources` 模組、metrics |
 | 修復 | Ansible + kubectl uncordon + 內建 playbook | 脫離 infra-bootstrap 硬編路徑 |
-| 部署 | `deploy.sh` + CronJob YAML | Helm chart + OCI 映像 |
+| 部署 | ~~`deploy.sh` + CronJob YAML~~ → **Helm**（`deploy.sh` wrapper） | OCI 映像 / ghcr 發佈 |
 | Secrets | 1Password Operator（dejavux 專用） | 可選：K8s Secret / ESO / 1Password |
 | GitOps | `dejavux/infra-bootstrap` 寫死 | `SENTINEL_GITHUB_REPO` 消費者自訂 |
 | 文件 | 設計在 monorepo | 獨立 README + 整合指南 |

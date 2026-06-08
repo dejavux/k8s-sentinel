@@ -19,8 +19,12 @@ helm upgrade --install k8s-sentinel ./charts/k8s-sentinel \
 
 ## 3q 叢集（完整修復 + GitOps + Ansible）
 
+**infra-bootstrap 建議**：`make deploy APP=sentinel`（registry mirror + `deploy.sh` Helm wrapper）。
+
+手動等同步驟：
+
 ```bash
-# 先建立 inventory ConfigMap + SSH secret（與 deploy.sh 相同）
+# 先建立 inventory ConfigMap + SSH secret（deploy.sh 會自動處理）
 kubectl create configmap k8s-sentinel-ansible-inventory \
   --from-file=hosts.yml=../../40_k8s/inventory/hosts.yml \
   -n kube-system --dry-run=client -o yaml | kubectl apply -f -
