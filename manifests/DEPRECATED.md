@@ -10,4 +10,6 @@ Flat manifests in this directory are **no longer applied** by `deploy.sh` or `ma
 | `cronjob.yaml` | `templates/cronjob.yaml` |
 | `1password-items.yaml` | `templates/onepassworditem.yaml` (when `onepassword.enabled`) |
 
-Kept for reference and smoke jobs (`job-phase*.yaml`, preload helpers). Do not `kubectl apply` rbac/cronjob alongside the Helm release.
+Kept for reference and smoke jobs (`job-phase*.yaml`). Do not `kubectl apply` rbac/cronjob alongside the Helm release.
+
+| `daemonset-preload-image.yaml` | **Deprecated** — `make configure-sentinel-registry-mirror` 已套用；3q 叢集未部署此 DS |
