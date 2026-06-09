@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# kubectl plugin: kubectl sentinel <subcommand>
+#
+# Install:
+#   ln -sf "$(pwd)/bin/kubectl-sentinel" ~/.local/bin/kubectl-sentinel
+#   # or: export PATH="$PATH:/path/to/k8s-sentinel/bin"
+#
+# Usage:
+#   kubectl sentinel trigger          # CronJob manual run
+#   kubectl sentinel logs [--wait]    # latest Job logs
+#   kubectl sentinel check [--local]  # cluster job (default) or local python
+#   kubectl sentinel status           # CronJob + last Job
+set -euo pipefail
+
+PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NAMESPACE="${SENTINEL_NAMESPACE:-kube-system}"
+CRONJOB="${SENTINEL_CRONJOB:-k8s-sentinel}"
+JOB_LABEL="${SENTINEL_JOB_LABEL:-app.kubernetes.io/name=k8s-sentinel}"
+DEFAULT_MODULES="${SENTINEL_MODULES:-runc,disk,pods,components,containerd,kubelet,resources}"
+WAIT_SEC="${SENTINEL_WAIT_SEC:-180}"
+LOG_TAIL="${SENTINEL_LOG_TAIL:-120}"
+
+usage() {
+  cat <<EOF
+Usage: kubectl sentinel <command> [options]
+
+Commands:
+  trigger              Create Job from CronJob/${CRONJOB}
+  logs [--wait]        Tail latest Job logs (WAIT=1 default for logs --wait)
+  check [--local]      Run health check (cluster Job unless --local)
+  status               Show CronJob schedule and recent Jobs
+  gitops-e2e           Run GitOps smoke (fallback meta + optional Cursor)
+
+Environment:
+  SENTINEL_NAMESPACE   default: kube-system
+  SENTINEL_MODULES     module list for --local check
+EOF
+}
+
+latest_job() {
+  kubectl get jobs -n "${NAMESPACE}" -l "${JOB_LABEL}" \
+    --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true
+}
+
+cmd_trigger() {
+  local name="sentinel-manual-$(date +%s)"
+  kubectl create job --from="cronjob/${CRONJOB}" "${name}" -n "${NAMESPACE}"
+  echo "→ created job/${name}"
+  echo "→ kubectl sentinel logs --wait"
+}
+
+cmd_logs() {
+  local wait="${WAIT:-0}"
+  if [[ "${1:-}" == "--wait" ]]; then
+    wait=1
+    shift
+  fi
+  local job
+  job="$(latest_job)"
+  if [[ -z "${job}" ]]; then
+    echo "No Job found (label ${JOB_LABEL})" >&2
+    exit 1
+  fi
+  echo "→ logs job/${job}"
+  if [[ "${wait}" == "1" ]]; then
+    kubectl wait -n "${NAMESPACE}" --for=condition=complete "job/${job}" \
+      --timeout="${WAIT_SEC}s" 2>/dev/null \
+      || kubectl wait -n "${NAMESPACE}" --for=condition=failed "job/${job}" \
+      --timeout=10s 2>/dev/null \
+      || true
+  fi
+  kubectl logs -n "${NAMESPACE}" "job/${job}" --tail="${LOG_TAIL}" "$@"
+}
+
+cmd_check() {
+  if [[ "${1:-}" == "--local" ]]; then
+    shift
+    cd "${PLUGIN_ROOT}/scripts"
+    exec python3 main.py check --modules ${DEFAULT_MODULES//,/ } "$@"
+  fi
+  cmd_trigger
+  WAIT=1 cmd_logs --wait
+}
+
+cmd_status() {
+  kubectl get cronjob "${CRONJOB}" -n "${NAMESPACE}" -o wide 2>/dev/null || true
+  echo "---"
+  kubectl get jobs -n "${NAMESPACE}" -l "${JOB_LABEL}" \
+    --sort-by=.metadata.creationTimestamp | tail -6
+  echo "---"
+  kubectl get cronjob "${CRONJOB}" -n "${NAMESPACE}" \
+    -o jsonpath='image={.spec.jobTemplate.spec.template.spec.containers[0].image}{"\n"}modules={.spec.jobTemplate.spec.template.spec.containers[0].env[?(@.name=="SENTINEL_MODULES")].value}{"\n"}' \
+    2>/dev/null || true
+}
+
+cmd_gitops_e2e() {
+  exec bash "${PLUGIN_ROOT}/scripts/smoke/run-gitops-e2e.sh" "$@"
+}
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+  case "${cmd}" in
+    trigger) cmd_trigger "$@" ;;
+    logs) cmd_logs "$@" ;;
+    check) cmd_check "$@" ;;
+    status) cmd_status "$@" ;;
+    gitops-e2e) cmd_gitops_e2e "$@" ;;
+    -h|--help|help|"") usage ;;
+    *)
+      echo "Unknown command: ${cmd}" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

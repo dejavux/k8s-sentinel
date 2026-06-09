@@ -60,6 +60,13 @@ helm upgrade --install k8s-sentinel ./charts/k8s-sentinel -n kube-system
 kubectl create job --from=cronjob/k8s-sentinel sentinel-check-$(date +%s) -n kube-system
 # infra-bootstrap：
 make cluster-trigger && make cluster-logs
+
+# kubectl plugin（bin/kubectl-sentinel）：
+kubectl sentinel trigger
+kubectl sentinel logs --wait
+kubectl sentinel check          # trigger + wait + logs
+kubectl sentinel check --local  # 本機 python（需 kubeconfig）
+kubectl sentinel gitops-e2e     # GitOps 故障注入 smoke
 ```
 
 ---
@@ -135,19 +142,18 @@ Workflow：`.github/workflows/ci.yml`
 | Phase | 完成度 | 說明 |
 |-------|--------|------|
 | **1** 基礎框架 | ✅ | CronJob、RBAC、Tekton、Helm、deploy wrapper |
-| **2** 檢查模組 | 🟢 ~95% | 7 模組程式完成；prod 仍 6 模組 |
-| **3** 修復 | 🟡 ~70% | Ansible + Pod fix 上線；Cursor 待 E2E |
-| **4** GitOps | 🟡 ~65% | pr_creator + dedup；需故障場景驗 PR |
-| **5** 手動觸發 | 🟡 ~50% | `make cluster-*`；無 kubectl plugin |
+| **2** 檢查模組 | ✅ | 7 模組 prod |
+| **3** 修復 | 🟡 ~75% | Ansible + Pod fix；Cursor live E2E 可選 |
+| **4** GitOps | 🟡 ~75% | pr_creator + fault-injection smoke |
+| **5** 手動觸發 | ✅ | `kubectl sentinel` plugin + `make cluster-*` |
 
 ---
 
 ## 待辦（repo 視角）
 
-1. v0.2.4 release + 3q 啟用 `resources`
-2. Helm：`config.metricsFile` → `SENTINEL_METRICS_FILE`
-3. ghcr / 公開 repo（C1.2、C3）— 3q 可延後
-4. Cursor SDK E2E、kubectl plugin、plugin 目錄
+1. ghcr / 公開 repo（C1.2、C3）— 3q 可延後
+2. Cursor SDK live E2E（`--with-cursor`）
+3. `SENTINEL_PLUGIN_DIR` 外掛目錄
 
 ---
 
@@ -158,4 +164,4 @@ Workflow：`.github/workflows/ci.yml`
 - infra-bootstrap [K8S_SENTINEL_POD_DESIGN.md](../../00_docs/planning/K8S_SENTINEL_POD_DESIGN.md)
 - infra-bootstrap [deploy/k8s-sentinel/TODO.md](../../deploy/k8s-sentinel/TODO.md)
 
-**最後更新**: 2026-06-09 · **叢集版本**: v0.2.3 · **main HEAD**: 含 C2 MVP
+**最後更新**: 2026-06-10 · **叢集版本**: v0.2.4
