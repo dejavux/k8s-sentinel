@@ -200,6 +200,19 @@ kubectl logs -n kube-system job/k8s-sentinel-XXXXXXXX
 
 ---
 
+## 🧪 CI（C1.1）
+
+GitHub Actions：push/PR → `main` 時執行 **pytest** + **ruff**（`scripts/gitops`、`scripts/tests`）。
+
+```bash
+make test      # 本機單元測試
+make lint-ci   # 與 GHA 相同
+```
+
+Workflow：`.github/workflows/ci.yml`
+
+---
+
 ## 🚧 開發狀態
 
 ### Phase 1: 基礎框架 ✅
