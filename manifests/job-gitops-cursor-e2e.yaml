@@ -25,7 +25,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: e2e
-          image: 10.101.22.227:5000/k8s-sentinel:v0.2.5
+          image: 10.101.22.227:5000/k8s-sentinel:v0.2.6
           imagePullPolicy: IfNotPresent
           command:
             - python3
