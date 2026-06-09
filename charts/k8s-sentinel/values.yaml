@@ -42,6 +42,10 @@ config:
   # Push metrics after each check (recommended for CronJob batch jobs)
   pushgatewayUrl: ""
   pushgatewayJob: k8s-sentinel
+  # Cursor Agent model — mirrors infra-bootstrap .env CURSOR_AGENT_MODEL / CURSOR_MODEL
+  # "default" or "auto" = SDK Auto; "composer-2.5" = explicit model
+  cursorAgentModel: ""
+  cursorModel: ""
 
 ansible:
   enabled: false

@@ -4,6 +4,7 @@
  * Usage: echo '{"checks":{...}}' | npx tsx cursor_fix_pr.ts
  */
 import { Agent } from "@cursor/sdk";
+import { getCursorModelOption } from "../lib/cursor-model.js";
 
 async function main() {
   const input = await new Promise<string>((resolve) => {
@@ -42,11 +43,11 @@ ${input.slice(0, 80000)}
 
   const result = await Agent.prompt(prompt, {
     apiKey,
-    model: { id: "composer-2" },
+    model: getCursorModelOption(),
   });
 
   if (result.status !== "finished" || !result.result?.trim()) {
-    console.error(`Agent failed: ${result.status}`);
+    console.error(`Agent failed: ${result.status} model=${getCursorModelOption().id}`);
     process.exit(1);
   }
   const text = result.result.trim();

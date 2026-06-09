@@ -100,6 +100,8 @@ k8s-sentinel/
 | `SENTINEL_OUTPUT_FILE` | JSON 結果路徑 | `/workspace/sentinel-results.json` |
 | `SENTINEL_METRICS_FILE` | Prometheus text 輸出（可選） | — |
 | `GITHUB_TOKEN` | GitOps PR | Secret |
+| `CURSOR_AGENT_MODEL` | Cursor Agent model（`default`/`auto`=Auto，`composer-2.5`=固定） | 讀 `.env` 或 Helm |
+| `CURSOR_MODEL` | 同上 fallback | 同上 |
 | `SENTINEL_GITHUB_REPO` | PR 目標 repo | 消費者自訂 |
 
 ---

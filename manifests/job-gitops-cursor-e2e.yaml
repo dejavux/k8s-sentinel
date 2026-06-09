@@ -39,6 +39,8 @@ spec:
                 secretKeyRef:
                   name: k8s-sentinel-secrets
                   key: cursor-api-key
+            - name: CURSOR_AGENT_MODEL
+              value: default
           resources:
             requests:
               cpu: 100m

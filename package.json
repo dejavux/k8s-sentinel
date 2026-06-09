@@ -4,6 +4,7 @@
   "type": "module",
   "dependencies": {
     "@cursor/sdk": "^1.0.13",
+    "dotenv": "^16.4.7",
     "tsx": "^4.19.0"
   }
 }

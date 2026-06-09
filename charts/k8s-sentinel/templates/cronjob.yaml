@@ -82,6 +82,14 @@ spec:
                 - name: SENTINEL_PUSHGATEWAY_JOB
                   value: {{ .Values.config.pushgatewayJob | quote }}
                 {{- end }}
+                {{- if .Values.config.cursorAgentModel }}
+                - name: CURSOR_AGENT_MODEL
+                  value: {{ .Values.config.cursorAgentModel | quote }}
+                {{- end }}
+                {{- if .Values.config.cursorModel }}
+                - name: CURSOR_MODEL
+                  value: {{ .Values.config.cursorModel | quote }}
+                {{- end }}
                 {{- if .Values.registry.endpoint }}
                 - name: SENTINEL_REGISTRY_ENDPOINT
                   value: {{ .Values.registry.endpoint | quote }}
