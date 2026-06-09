@@ -23,6 +23,8 @@ AUTO_MERGE_PATH_PREFIXES = tuple(
     for p in os.getenv(
         "SENTINEL_AUTO_MERGE_WHITELIST",
         "60_apps/k8s-sentinel/,"
+        "60_apps/buildkit/,"
+        "60_apps/docker-registry/,"
         "60_apps/tekton-ci/scripts/prune-ci-node-ephemeral.sh,"
         "00_docs/operations/runbooks/,"
         "40_k8s/playbooks/maintenance/,"
@@ -33,6 +35,51 @@ AUTO_MERGE_PATH_PREFIXES = tuple(
 )
 
 _BRANCH_PREFIX = "sentinel/fix-"
+
+
+def count_open_sentinel_prs(repo_root: Path) -> int:
+    """Count open PRs whose head branch starts with sentinel/fix-."""
+    proc = gh_cmd(
+        repo_root,
+        [
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--json",
+            "headRefName",
+            "--limit",
+            "50",
+        ],
+    )
+    if proc.returncode != 0:
+        logger.warning("gh pr list failed: %s", proc.stderr[-300:])
+        return 0
+    try:
+        items = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return 0
+    return sum(
+        1
+        for item in items
+        if str(item.get("headRefName", "")).startswith(_BRANCH_PREFIX)
+    )
+
+
+def open_sentinel_pr_limit_reached(repo_root: Path) -> bool:
+    """True when open sentinel/fix-* PRs meet or exceed SENTINEL_MAX_OPEN_PRS."""
+    limit = int(os.getenv("SENTINEL_MAX_OPEN_PRS", "1"))
+    if limit <= 0:
+        return False
+    open_count = count_open_sentinel_prs(repo_root)
+    if open_count >= limit:
+        logger.info(
+            "Skipping new PR: %d open sentinel PR(s) (limit=%d)",
+            open_count,
+            limit,
+        )
+        return True
+    return False
 
 
 def sanitize_git_branch_slug(raw: str, *, prefix: str = _BRANCH_PREFIX) -> str:
@@ -79,6 +126,13 @@ def create_fix_pr(
     if not files:
         logger.warning("No files to commit; skipping PR")
         return {"success": False, "message": "no files in PR meta"}
+
+    if open_sentinel_pr_limit_reached(root):
+        return {
+            "success": False,
+            "message": "open sentinel PR exists; skip duplicate",
+            "open_sentinel_prs": count_open_sentinel_prs(root),
+        }
 
     branch = sanitize_git_branch_slug(
         str(

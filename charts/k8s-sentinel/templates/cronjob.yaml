@@ -54,6 +54,8 @@ spec:
                   value: {{ .Values.config.autoPR | quote }}
                 - name: SENTINEL_AUTO_MERGE
                   value: {{ .Values.config.autoMerge | quote }}
+                - name: SENTINEL_MAX_OPEN_PRS
+                  value: {{ .Values.config.maxOpenPrs | quote }}
                 - name: SENTINEL_DISK_ANSIBLE
                   value: {{ .Values.config.diskAnsible | quote }}
                 - name: SENTINEL_CONTAINERD_ANSIBLE

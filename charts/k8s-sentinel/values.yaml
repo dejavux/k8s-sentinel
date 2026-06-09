@@ -28,6 +28,7 @@ config:
   autoFix: false
   autoPR: false
   autoMerge: false
+  maxOpenPrs: 1
   diskWarnPercent: 75
   diskErrorPercent: 85
   diskWarnFail: true

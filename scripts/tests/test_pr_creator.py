@@ -1,8 +1,13 @@
-"""Tests for GitOps PR branch slug sanitization."""
+"""Tests for GitOps PR branch slug sanitization and open-PR guard."""
 
 import unittest
+from unittest.mock import MagicMock, patch
 
-from gitops.pr_creator import sanitize_git_branch_slug
+from gitops.pr_creator import (
+    count_open_sentinel_prs,
+    open_sentinel_pr_limit_reached,
+    sanitize_git_branch_slug,
+)
 
 
 class SanitizeBranchTests(unittest.TestCase):
@@ -18,6 +23,27 @@ class SanitizeBranchTests(unittest.TestCase):
         """Whitespace-only input falls back to sentinel/fix-run."""
         branch = sanitize_git_branch_slug("   ")
         self.assertEqual(branch, "sentinel/fix-run")
+
+
+class OpenPrGuardTests(unittest.TestCase):
+    """open_sentinel_pr_limit_reached respects SENTINEL_MAX_OPEN_PRS."""
+
+    @patch("gitops.pr_creator.gh_cmd")
+    def test_blocks_when_open_pr_exists(self, mock_gh: MagicMock) -> None:
+        mock_gh.return_value = MagicMock(
+            returncode=0,
+            stdout='[{"headRefName": "sentinel/fix-pods"}]',
+            stderr="",
+        )
+        with patch.dict("os.environ", {"SENTINEL_MAX_OPEN_PRS": "1"}):
+            self.assertTrue(open_sentinel_pr_limit_reached(MagicMock()))
+        self.assertEqual(count_open_sentinel_prs(MagicMock()), 1)
+
+    @patch("gitops.pr_creator.gh_cmd")
+    def test_allows_when_under_limit(self, mock_gh: MagicMock) -> None:
+        mock_gh.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
+        with patch.dict("os.environ", {"SENTINEL_MAX_OPEN_PRS": "1"}):
+            self.assertFalse(open_sentinel_pr_limit_reached(MagicMock()))
 
 
 if __name__ == "__main__":
