@@ -31,7 +31,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Ruff
-        run: ruff check scripts/gitops scripts/tests
+        run: ruff check scripts/gitops scripts/tests scripts/checks/resources_check.py scripts/metrics
 
       - name: Pytest
         run: pytest

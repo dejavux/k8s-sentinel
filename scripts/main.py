@@ -20,9 +20,11 @@ from checks.containerd_check import ContainerdCheck
 from checks.disk_check import DiskCheck
 from checks.kubelet_check import KubeletCheck
 from checks.pod_check import PodCheck
+from checks.resources_check import ResourcesCheck
 from checks.runc_check import RuncCheck
 from gitops.pr_creator import create_fix_pr
 from gitops.repo_bootstrap import ensure_clone
+from metrics.prometheus import render_prometheus_metrics
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,6 +42,7 @@ def register_checks() -> None:
     CheckRegistry.register(ComponentsCheck())
     CheckRegistry.register(ContainerdCheck())
     CheckRegistry.register(KubeletCheck())
+    CheckRegistry.register(ResourcesCheck())
 
     logger.info("Registered %d check modules", len(CheckRegistry.list_all()))
 
@@ -202,6 +205,11 @@ def save_results(
     if output_file:
         with open(output_file, "w", encoding="utf-8") as handle:
             json.dump(output, handle, indent=2)
+
+    metrics_file = os.getenv("SENTINEL_METRICS_FILE")
+    if metrics_file:
+        with open(metrics_file, "w", encoding="utf-8") as handle:
+            handle.write(render_prometheus_metrics(check_results))
         logger.info("Results saved to: %s", output_file)
 
 
