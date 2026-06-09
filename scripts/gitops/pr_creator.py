@@ -184,6 +184,7 @@ def generate_pr_meta(
         script = root / "60_apps/k8s-sentinel/scripts/gitops/cursor_fix_pr.ts"
     if api_key and script.is_file():
         npx_root = str(script.parent.parent.parent)
+        work_dir = root if root.is_dir() else Path(npx_root)
         try:
             proc = subprocess.run(
                 ["npx", "--prefix", npx_root, "tsx", str(script)],
@@ -191,7 +192,7 @@ def generate_pr_meta(
                 capture_output=True,
                 text=True,
                 check=False,
-                cwd=str(root),
+                cwd=str(work_dir),
                 env={**os.environ, "CURSOR_API_KEY": api_key},
                 timeout=300,
             )
