@@ -176,13 +176,17 @@ def generate_pr_meta(
     """Build PR metadata via Cursor SDK or fallback template."""
     root = repo_root or ROOT
     api_key = os.getenv("CURSOR_API_KEY")
-    script = Path("/app/scripts/gitops/cursor_fix_pr.ts")
+    package_root = Path(os.getenv("SENTINEL_PACKAGE_ROOT", "/app"))
+    script = package_root / "scripts/gitops/cursor_fix_pr.ts"
+    if not script.is_file():
+        script = Path("/app/scripts/gitops/cursor_fix_pr.ts")
     if not script.is_file():
         script = root / "60_apps/k8s-sentinel/scripts/gitops/cursor_fix_pr.ts"
     if api_key and script.is_file():
+        npx_root = str(script.parent.parent.parent)
         try:
             proc = subprocess.run(
-                ["npx", "--prefix", "/app", "tsx", str(script)],
+                ["npx", "--prefix", npx_root, "tsx", str(script)],
                 input=json.dumps(payload),
                 capture_output=True,
                 text=True,

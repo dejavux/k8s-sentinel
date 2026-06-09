@@ -1,0 +1,48 @@
+---
+# Live Cursor SDK E2E (fault-injection payload → generate_pr_meta).
+# Usage:
+#   kubectl apply -f manifests/job-gitops-cursor-e2e.yaml
+#   kubectl logs -n kube-system -l phase=gitops-cursor-e2e -f
+#   kubectl delete job k8s-sentinel-gitops-cursor-e2e -n kube-system
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k8s-sentinel-gitops-cursor-e2e
+  namespace: kube-system
+  labels:
+    app: k8s-sentinel
+    phase: gitops-cursor-e2e
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: k8s-sentinel
+        phase: gitops-cursor-e2e
+    spec:
+      serviceAccountName: k8s-sentinel
+      restartPolicy: Never
+      containers:
+        - name: e2e
+          image: 10.101.22.227:5000/k8s-sentinel:v0.2.4
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - /app/scripts/smoke/gitops_e2e.py
+            - --with-cursor
+          env:
+            - name: SENTINEL_PACKAGE_ROOT
+              value: /app
+            - name: CURSOR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: cursor-api-key
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1536Mi
