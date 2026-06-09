@@ -72,6 +72,16 @@ spec:
                   value: {{ .Values.config.packageRoot | quote }}
                 - name: SENTINEL_OUTPUT_FILE
                   value: {{ .Values.config.outputFile | quote }}
+                {{- if .Values.config.metricsFile }}
+                - name: SENTINEL_METRICS_FILE
+                  value: {{ .Values.config.metricsFile | quote }}
+                {{- end }}
+                {{- if .Values.config.pushgatewayUrl }}
+                - name: SENTINEL_PUSHGATEWAY_URL
+                  value: {{ .Values.config.pushgatewayUrl | quote }}
+                - name: SENTINEL_PUSHGATEWAY_JOB
+                  value: {{ .Values.config.pushgatewayJob | quote }}
+                {{- end }}
                 {{- if .Values.registry.endpoint }}
                 - name: SENTINEL_REGISTRY_ENDPOINT
                   value: {{ .Values.registry.endpoint | quote }}

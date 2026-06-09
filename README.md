@@ -1,244 +1,161 @@
-# K8s Sentinel - 自動化叢集健康檢查與修復
+# K8s Sentinel — 自動化叢集健康檢查與修復
 
-**狀態**: 🟢 MVP 運作中（含 containerd/kubelet；公開 repo 規劃見 [docs/PUBLIC_REPO_PLAN.md](docs/PUBLIC_REPO_PLAN.md)）
-**版本**: v0.1.0-dev
-**維護者**: Infrastructure Team
-
----
-
-## 🎯 概述
-
-K8s Sentinel 是一個自動化的 Kubernetes 叢集健康檢查與修復系統，能夠：
-
-- 🔍 **定期掃描**：CronJob 每 30 分鐘檢查叢集健康
-- 🔧 **自動修復**：整合 Ansible + Cursor SDK 處理常見問題
-- 📝 **GitOps 整合**：修復後自動提交 PR 並 merge
-- 🎮 **手動觸發**：支援 kubectl plugin 手動執行特定模組
+**狀態**: 🟢 3q 生產運作中（v0.2.3 · 6 模組）  
+**程式 repo**: [dejavux/k8s-sentinel](https://github.com/dejavux/k8s-sentinel)（private submodule）  
+**3q 部署**: infra-bootstrap `deploy/k8s-sentinel/` + `make deploy APP=sentinel`  
+**公開化規劃**: [docs/PUBLIC_REPO_PLAN.md](docs/PUBLIC_REPO_PLAN.md)
 
 ---
 
-## 📋 功能模組
+## 概述
 
-| 模組 | 檢查項目 | 自動修復 | 狀態 |
-|------|---------|---------|------|
+K8s Sentinel 以 CronJob 定期掃描 Kubernetes 叢集，整合 Ansible 修復與 GitOps PR：
+
+- 每 30 分鐘自動檢查（可手動 trigger）
+- host 層修復：Ansible + SSH（3q overlay 使用 `hostNetwork`）
+- 叢集內修復：Pod 重啟、Succeeded Pod 清理
+- GitOps：修復後開 PR（`SENTINEL_MAX_OPEN_PRS` 防重複）
+
+---
+
+## 功能模組
+
+| 模組 | 檢查項目 | 自動修復 | 3q prod |
+|------|---------|---------|---------|
 | `runc` | runc 可用性 | ✅ Ansible | ✅ |
-| `disk` | DiskPressure / host rootfs（Ansible df） | ✅ CI Pod 清理 + Ansible（host） | ✅ |
-| `containerd` | CRI / runtime Unknown、NodeStatusUnknown | ✅ Ansible `fix-containerd-cri` + uncordon | ✅ |
-| `kubelet` | NotReady、kubelet restart、uncordon | ✅ systemctl + uncordon | ✅ |
-| `pods` | Pod 異常狀態 | ✅ 叢集內 + GitOps PR | ✅ |
-| `components` | 平台組件（kube-proxy、CoreDNS…） | ✅ Pod 重啟 | ✅ |
-| `resources` | MemoryPressure / PIDPressure / metrics-server 使用率 | ❌ 僅告警 | ✅ C2 MVP |
+| `disk` | DiskPressure / host rootfs | ✅ Ansible + CI 清理 | ✅ |
+| `containerd` | CRI Unknown、NodeStatusUnknown | ✅ fix-containerd-cri | ✅ |
+| `kubelet` | NotReady、uncordon | ✅ systemctl | ✅ |
+| `pods` | 異常 Pod 狀態 | ✅ 叢集內 + GitOps PR | ✅ |
+| `components` | kube-proxy、CoreDNS 等 | ✅ Pod 重啟 | ✅ |
+| `resources` | Memory/PID pressure、`kubectl top` | ❌ 僅告警 | ⏳ v0.2.4+ |
+
+`resources` 與 Prometheus text metrics 已合入 main（`4e370d0`）；叢集待 v0.2.4 deploy 後啟用。
 
 ---
 
-## 🚀 快速開始
+## 快速開始
 
-### 前置需求
+### 3q 叢集（infra-bootstrap）
 
-- Kubernetes 1.24+
-- kubectl 已配置
-- 1Password Connect + Operator（用於 secrets 管理）
-- （可選）Cursor API Key（用於 AI 生成修復方案）
+```bash
+make sync-submodules
+make deploy APP=sentinel TAG=v0.2.3      # 僅 Helm
+make install APP=sentinel TAG=v0.2.4   # Tekton build + deploy（含 resources 時改 values）
+```
 
-### 映像拉取（kubelet）
+詳見 infra-bootstrap [`deploy/k8s-sentinel/README.md`](../../deploy/k8s-sentinel/README.md)（路徑相對 submodule 根目錄可能需調整；以 monorepo 根為準）。
 
-節點 **無法** 直接拉 `registry-internal.3q.fi`（需 chart `kubeletHttps`）或 `*.svc.cluster.local`（節點 DNS 限制）。
-
-**建議**（與 Tekton `make install APP=sentinel` 一致）：
-
-1. `make configure-sentinel-registry-mirror`（Ansible：containerd HTTP mirror → registry ClusterIP:5000）
-2. 或暫用 `manifests/daemonset-preload-image.yaml` 預載後 CronJob `imagePullPolicy: IfNotPresent`
-3. CronJob 映像格式：`$(kubectl get svc registry -n docker-registry-internal -o jsonpath='{.spec.clusterIP}'):5000/k8s-sentinel:v0.1.0-dev`
-
-### 安裝
-
-**Helm（推薦）** — 見 [docs/INSTALL_HELM.md](docs/INSTALL_HELM.md)
+### Helm（通用）
 
 ```bash
 helm upgrade --install k8s-sentinel ./charts/k8s-sentinel -n kube-system
-# 3q 叢集：-f ./charts/k8s-sentinel/values-3q-prod.yaml
 ```
 
-**infra-bootstrap（3q 叢集）**
-
-```bash
-# build + Helm deploy（含 registry mirror）
-make install APP=sentinel
-
-# 僅部署（沿用既有映像）
-make deploy APP=sentinel TAG=v0.1.0-dev
-```
-
-`deploy.sh` 為 Helm wrapper（`values-3q-prod.yaml`）。舊版 `manifests/rbac.yaml` / `cronjob.yaml` 已廢棄，見 [manifests/DEPRECATED.md](manifests/DEPRECATED.md)。
+見 [docs/INSTALL_HELM.md](docs/INSTALL_HELM.md)。
 
 ### 手動觸發
 
 ```bash
-# 檢查所有模組
-kubectl create job --from=cronjob/k8s-sentinel \
-  sentinel-check-$(date +%s) -n kube-system
-
-# 檢查特定模組
-kubectl create job --from=cronjob/k8s-sentinel \
-  sentinel-check-runc-$(date +%s) -n kube-system \
-  -- check --module runc
-
-# 執行修復
-kubectl create job --from=cronjob/k8s-sentinel \
-  sentinel-fix-$(date +%s) -n kube-system \
-  -- fix --module runc --nodes worker1,worker2
+kubectl create job --from=cronjob/k8s-sentinel sentinel-check-$(date +%s) -n kube-system
+# infra-bootstrap：
+make cluster-trigger && make cluster-logs
 ```
 
 ---
 
-## 📁 目錄結構
+## 目錄結構
 
 ```text
-60_apps/k8s-sentinel/
-├── README.md                           # 本檔案
-├── manifests/
-│   ├── rbac.yaml                       # ServiceAccount + ClusterRole
-│   ├── cronjob.yaml                    # 定期執行的 CronJob
-│   ├── 1password-items.yaml            # Secrets 管理
-│   └── examples/
-│       └── manual-job.example.yaml     # 手動觸發範例
+k8s-sentinel/
+├── charts/k8s-sentinel/     # Helm（CronJob、RBAC、values）
 ├── scripts/
-│   ├── checks/                         # 檢查模組
-│   │   ├── __init__.py
-│   │   ├── base.py                     # 基礎類
-│   │   └── runc_check.py               # runc 檢查
-│   │   └── disk_check.py               # disk / ephemeral 檢查
-│   ├── fixers/                         # 修復模組
-│   │   ├── ansible_fixer.py            # Ansible 執行器
-│   │   └── cursor_agent.ts             # Cursor SDK 整合
-│   ├── gitops/                         # GitOps 整合
-│   │   └── pr_creator.py               # PR 自動化
-│   └── main.py                         # 主程式入口
-├── Dockerfile                          # Container 映像
-└── deploy.sh                           # 部署腳本
+│   ├── checks/              # 檢查模組（BaseCheck + registry）
+│   ├── fixers/              # Ansible runner
+│   ├── gitops/              # pr_creator、repo_bootstrap
+│   ├── metrics/             # Prometheus text exposition
+│   └── main.py
+├── ansible/playbooks/       # fix-containerd-cri 等
+├── tekton/                  # release pipeline
+├── docs/
+└── manifests/               # 裸 YAML（DEPRECATED，優先 Helm）
 ```
 
 ---
 
-## 🔧 配置
+## 配置（環境變數）
 
-### 環境變數
-
-| 變數 | 說明 | 必需 | 預設值 |
-|------|------|------|--------|
-| `CURSOR_API_KEY` | Cursor SDK API Key | ❌ | - |
-| `GITHUB_TOKEN` | GitHub Personal Access Token | ✅ | - |
-| `SENTINEL_MODE` | 執行模式（check/fix） | ❌ | check |
-| `SENTINEL_MODULES` | 要執行的模組（逗號分隔） | ❌ | all |
-| `SENTINEL_AUTO_FIX` | 是否自動修復 | ❌ | false |
-| `SENTINEL_AUTO_PR` | 是否自動建立 PR | ❌ | false |
+| 變數 | 說明 | 預設 |
+|------|------|------|
+| `SENTINEL_MODULES` | 模組列表（逗號分隔） | chart values |
+| `SENTINEL_AUTO_FIX` | 自動修復 | false（公開 chart） |
+| `SENTINEL_MAX_OPEN_PRS` | 同 repo 最多 open fix PR | 1 |
+| `SENTINEL_OUTPUT_FILE` | JSON 結果路徑 | `/workspace/sentinel-results.json` |
+| `SENTINEL_METRICS_FILE` | Prometheus text 輸出（可選） | — |
+| `GITHUB_TOKEN` | GitOps PR | Secret |
+| `SENTINEL_GITHUB_REPO` | PR 目標 repo | 消費者自訂 |
 
 ---
 
-## 📊 監控與日誌
+## 監控
 
-### 查看執行日誌
+### 日誌
 
 ```bash
-# 查看最近的 CronJob 執行
-kubectl get jobs -n kube-system -l app=k8s-sentinel --sort-by=.metadata.creationTimestamp
-
-# 查看特定 Job 日誌
+kubectl get jobs -n kube-system -l app.kubernetes.io/name=k8s-sentinel
 kubectl logs -n kube-system job/k8s-sentinel-XXXXXXXX
 ```
 
-### 監控指標
+### Metrics（C2，可選）
 
-（Phase 3 實作）
+設定 `SENTINEL_METRICS_FILE` 後，每次 check 寫入 Prometheus text exposition，例如：
 
-- sentinel_check_total - 檢查執行次數
-- sentinel_fix_total - 修復執行次數
-- sentinel_fix_success_rate - 修復成功率
+- `sentinel_check_status{module="disk"}`
+- `sentinel_node_memory_usage_percent{node="worker1"}`
 
----
-
-## 🔐 安全考量
-
-1. **最小權限原則**：
-   - Sentinel ServiceAccount 僅有必要的 read 權限
-   - 修復操作透過 Ansible（有 audit log）
-
-2. **Secrets 管理**：
-   - 所有敏感資訊存放在 1Password
-   - 使用 1Password Operator 自動同步
-
-3. **PR Review**：
-   - 高風險修復需人工 approve
-   - 自動 merge 限制在白名單模組
+Helm chart 尚未暴露 `metricsFile` values；v0.2.4 前可手動 patch CronJob env。
 
 ---
 
-## 📚 相關文檔
+## CI（C1.1）
 
-- [設計文檔](../../00_docs/planning/K8S_SENTINEL_POD_DESIGN.md) - 完整架構設計
-- [PROGRESS_TRACKING.md](../../00_docs/planning/PROGRESS_TRACKING.md) - 實作進度
-- [worker-node-runc-troubleshooting.md](../../00_docs/operations/runbooks/worker-node-runc-troubleshooting.md) - runc 故障排除
-
----
-
-## 📊 Phase 進度
-
-| Phase | 完成度 | 說明 |
-|-------|--------|------|
-| **1** 基礎框架 | ✅ 100% | CronJob、RBAC、Tekton、deploy |
-| **2** 檢查模組 | 🟡 ~85% | 6 模組上線；缺 `resources` |
-| **3** 修復 | 🟡 ~60% | Ansible + Pod fix；Cursor 待驗收 |
-| **4** GitOps | 🟡 ~50% | `pr_creator` 已修；端到端 PR 待觸發場景 |
-| **5** 手動觸發 | 🟡 ~40% | `make cluster-*` 可用；無 kubectl plugin |
-
-### 待辦（優先順序）
-
-1. [公開 repo + Helm](docs/PUBLIC_REPO_PLAN.md) Phase A
-2. `make configure-sentinel-registry-mirror`（certs.d）→ 移除 preload DaemonSet
-3. Cursor SDK + GitOps PR 端到端驗收
-4. `resources` 模組、kubectl plugin、Prometheus metrics
-
----
-
-## 🧪 CI（C1.1）
-
-GitHub Actions：push/PR → `main` 時執行 **pytest** + **ruff**（`scripts/gitops`、`scripts/tests`）。
+GitHub Actions：push/PR → main 執行 **pytest** + **ruff**。
 
 ```bash
-make test      # 本機單元測試
-make lint-ci   # 與 GHA 相同
+make test       # 15 tests
+make lint-ci
 ```
 
 Workflow：`.github/workflows/ci.yml`
 
 ---
 
-## 🚧 開發狀態
+## Phase 進度
 
-### Phase 1: 基礎框架 ✅
-
-- [x] 建立目錄結構、RBAC、CronJob、1Password CR、Dockerfile、`deploy.sh`
-- [x] 叢集 CronJob（`kube-system`）
-- [x] Tekton release（`make install APP=sentinel`）
-- [x] kubelet 映像拉取（ClusterIP + preload / `configure-sentinel-registry-mirror`）
-
-### Phase 2–4: 部分完成 🚧
-
-- [x] 檢查：`runc`、`disk`、`pods`、`components`（叢集 2026-06-08 全綠）
-- [x] 修復：Ansible runner、Pod 重啟、Succeeded Pod prune
-- [x] GitOps：`pr_creator.py`（分支名 sanitize；無 files 不開 PR）
-- [x] `containerd` / `kubelet` 檢查 + `ansible/playbooks/fix-containerd-cri.yml`
-- [ ] `resources` 檢查
-- [ ] Cursor SDK 端到端驗收
-
-### Phase 5: 手動觸發 🚧
-
-- [x] `make cluster-check` / `cluster-trigger` / `cluster-sentinel.sh`
-- [ ] kubectl plugin
-
-詳見 [設計文檔](../../00_docs/planning/K8S_SENTINEL_POD_DESIGN.md)
+| Phase | 完成度 | 說明 |
+|-------|--------|------|
+| **1** 基礎框架 | ✅ | CronJob、RBAC、Tekton、Helm、deploy wrapper |
+| **2** 檢查模組 | 🟢 ~95% | 7 模組程式完成；prod 仍 6 模組 |
+| **3** 修復 | 🟡 ~70% | Ansible + Pod fix 上線；Cursor 待 E2E |
+| **4** GitOps | 🟡 ~65% | pr_creator + dedup；需故障場景驗 PR |
+| **5** 手動觸發 | 🟡 ~50% | `make cluster-*`；無 kubectl plugin |
 
 ---
 
-**最後更新**: 2026-06-08（containerd/kubelet 模組、公開 repo 規劃）
-**版本**: v0.1.0-dev
+## 待辦（repo 視角）
+
+1. v0.2.4 release + 3q 啟用 `resources`
+2. Helm：`config.metricsFile` → `SENTINEL_METRICS_FILE`
+3. ghcr / 公開 repo（C1.2、C3）— 3q 可延後
+4. Cursor SDK E2E、kubectl plugin、plugin 目錄
+
+---
+
+## 相關文檔
+
+- [INSTALL_HELM.md](docs/INSTALL_HELM.md)
+- [PUBLIC_REPO_PLAN.md](docs/PUBLIC_REPO_PLAN.md)
+- infra-bootstrap [K8S_SENTINEL_POD_DESIGN.md](../../00_docs/planning/K8S_SENTINEL_POD_DESIGN.md)
+- infra-bootstrap [deploy/k8s-sentinel/TODO.md](../../deploy/k8s-sentinel/TODO.md)
+
+**最後更新**: 2026-06-09 · **叢集版本**: v0.2.3 · **main HEAD**: 含 C2 MVP

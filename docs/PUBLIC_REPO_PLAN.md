@@ -1,7 +1,7 @@
 # K8s Sentinel — 公開 Repo 與跨專案整合規劃
 
-**版本**: v0.2.0-plan  
-**日期**: 2026-06-08  
+**版本**: v0.2.3-status  
+**日期**: 2026-06-09  
 **決策（2026-06-08）**：
 
 | 項目 | 決定 |
@@ -18,7 +18,7 @@
 
 | 項目 | 現況 | 公開化前需完成 |
 |------|------|----------------|
-| 核心檢查 | runc / disk / pods / components / **containerd / kubelet** | `resources` 模組、metrics |
+| 核心檢查 | runc / disk / pods / components / containerd / kubelet / **resources（程式）** | prod deploy v0.2.4；Prometheus 接線 |
 | 修復 | Ansible + kubectl uncordon + 內建 playbook | 脫離 infra-bootstrap 硬編路徑 |
 | 部署 | ~~`deploy.sh` + CronJob YAML~~ → **Helm**（`deploy.sh` wrapper） | OCI 映像 / ghcr 發佈 |
 | Secrets | 1Password Operator（dejavux 專用） | 可選：K8s Secret / ESO / 1Password |
@@ -151,13 +151,14 @@ env:
 ### Phase A — 可公開 MVP（1–2 週）
 
 - [x] containerd / kubelet 檢查 + fix playbook
-- [x] Helm chart `charts/k8s-sentinel`（values 預設 check-only；`values-3q-prod.yaml` overlay）
+- [x] Helm chart `charts/k8s-sentinel`（values 預設 check-only；3q overlay 在 `deploy/k8s-sentinel/`）
 - [x] `docs/INSTALL_HELM.md`
-- [ ] 建立 **private** repo `dejavux/k8s-sentinel`（subtree / push）
+- [x] 建立 **private** repo `dejavux/k8s-sentinel`（git submodule @ infra-bootstrap）
+- [x] CI：pytest + ruff（GHA `ci.yml`）
+- [x] infra-bootstrap `make install APP=sentinel` → Helm wrapper + Tekton build
 - [ ] `manifests/overlays/generic`（無 1Password 的 kustomize，可選）
-- [ ] CI：pytest + ruff + 映像 push `ghcr.io`
+- [ ] CI 映像 push `ghcr.io`（**3q 延後**：內網 registry 足夠）
 - [ ] LICENSE（Apache-2.0）+ SECURITY.md — **公開當天**
-- [ ] infra-bootstrap `make install APP=sentinel` 改 helm wrapper
 
 **交付物**：任何人 `helm install` 即可跑 check-only。
 
@@ -173,7 +174,7 @@ env:
 
 ### Phase C — 社群化（1 個月+）
 
-- [ ] `resources` 檢查、Prometheus metrics
+- [x] `resources` 檢查、Prometheus metrics（程式 MVP；deploy + Helm metricsFile 待做）
 - [ ] kubectl plugin（`kubectl sentinel check`）
 - [ ] Plugin 目錄 `SENTINEL_PLUGIN_DIR`
 - [ ] Artifact Hub 上架 Helm chart
@@ -240,7 +241,9 @@ gitops:
 ## 9. 下一步
 
 1. ~~Org / 授權~~ → `dejavux/k8s-sentinel` private + Apache-2.0  
-2. ~~Phase A Helm~~ → chart 已 scaffold；待 push private repo + 叢集 `helm upgrade` 驗收  
-3. 公開前：`LICENSE`、CI ghcr、將 repo visibility 改 public  
+2. ~~Phase A Helm + 3q 驗收~~ → v0.2.3 穩定；`SENTINEL_MAX_OPEN_PRS=1`  
+3. **近期**：v0.2.4 + `resources` 模組；Helm `metricsFile`；Prometheus 接線  
+4. **可延後**：ghcr（C1.2）、公開 repo（C3）  
+5. 公開當天：`LICENSE`、SECURITY.md、visibility → public  
 
-詳見 [INSTALL_HELM.md](INSTALL_HELM.md)。
+詳見 [INSTALL_HELM.md](INSTALL_HELM.md)、infra-bootstrap [deploy/k8s-sentinel/TODO.md](../../../deploy/k8s-sentinel/TODO.md)。

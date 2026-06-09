@@ -11,6 +11,7 @@ import logging
 import os
 import subprocess
 import sys
+import urllib.error
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,7 @@ from checks.runc_check import RuncCheck
 from gitops.pr_creator import create_fix_pr
 from gitops.repo_bootstrap import ensure_clone
 from metrics.prometheus import render_prometheus_metrics
+from metrics.pushgateway import push_prometheus_metrics
 
 logging.basicConfig(
     level=logging.INFO,
@@ -207,10 +209,22 @@ def save_results(
             json.dump(output, handle, indent=2)
 
     metrics_file = os.getenv("SENTINEL_METRICS_FILE")
+    metrics_text = ""
+    if metrics_file or os.getenv("SENTINEL_PUSHGATEWAY_URL"):
+        metrics_text = render_prometheus_metrics(check_results)
     if metrics_file:
         with open(metrics_file, "w", encoding="utf-8") as handle:
-            handle.write(render_prometheus_metrics(check_results))
-        logger.info("Results saved to: %s", output_file)
+            handle.write(metrics_text)
+        logger.info("Metrics written to: %s", metrics_file)
+
+    pushgateway_url = os.getenv("SENTINEL_PUSHGATEWAY_URL")
+    if pushgateway_url and metrics_text:
+        job = os.getenv("SENTINEL_PUSHGATEWAY_JOB", "k8s-sentinel")
+        try:
+            push_prometheus_metrics(pushgateway_url, job, metrics_text)
+            logger.info("Metrics pushed to Pushgateway job=%s", job)
+        except urllib.error.URLError:
+            logger.warning("Continuing without Pushgateway (check still succeeded)")
 
 
 def main() -> int:

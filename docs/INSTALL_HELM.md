@@ -13,7 +13,7 @@
 helm upgrade --install k8s-sentinel ./charts/k8s-sentinel \
   -n kube-system \
   --set image.repository=ghcr.io/dejavux/k8s-sentinel \
-  --set image.tag=v0.2.2
+  --set image.tag=v0.2.3
 ```
 
 `config.autoFix=false`、`config.autoPR=false` — 僅掃描、不修改叢集。
@@ -23,9 +23,9 @@ helm upgrade --install k8s-sentinel ./charts/k8s-sentinel \
 **建議**：在 monorepo 根目錄：
 
 ```bash
-make deploy APP=sentinel TAG=v0.2.2
+make deploy APP=sentinel TAG=v0.2.3
 # 或 build + deploy
-make install APP=sentinel TAG=v0.2.2
+make install APP=sentinel TAG=v0.2.4   # 含 resources 模組時
 ```
 
 薄封裝：`deploy/k8s-sentinel/`（Helm overlay + `deploy.sh`）。
@@ -56,14 +56,14 @@ helm upgrade --install k8s-sentinel ./charts/k8s-sentinel \
   -n kube-system \
   -f /path/to/values-3q-prod.yaml \
   --set image.repository=REGISTRY:5000/k8s-sentinel \
-  --set image.tag=v0.2.2
+  --set image.tag=v0.2.3
 ```
 
 ## 常用 values
 
 | Key | 說明 |
 |-----|------|
-| `config.modules` | 檢查模組（預設含 containerd、kubelet） |
+| `config.modules` | 檢查模組（可加 `resources`；v0.2.4+） |
 | `config.autoFix` | 自動修復 |
 | `ansible.enabled` | inventory + SSH Secret 掛載 |
 | `ansible.hostNetwork` | Pod 用 host 網路做 SSH |

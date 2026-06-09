@@ -8,7 +8,7 @@ namespace: kube-system
 
 image:
   repository: ghcr.io/dejavux/k8s-sentinel
-  tag: v0.2.0
+  tag: v0.2.4
   pullPolicy: IfNotPresent
 
 schedule: "*/30 * * * *"
@@ -37,6 +37,11 @@ config:
   infraRoot: /workspace/infra-bootstrap
   packageRoot: /app
   outputFile: /workspace/sentinel-results.json
+  # Optional Prometheus text file (EmptyDir; use with pushgatewayUrl for scrape)
+  metricsFile: ""
+  # Push metrics after each check (recommended for CronJob batch jobs)
+  pushgatewayUrl: ""
+  pushgatewayJob: k8s-sentinel
 
 ansible:
   enabled: false
