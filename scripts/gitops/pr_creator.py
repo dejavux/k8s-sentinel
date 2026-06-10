@@ -132,6 +132,15 @@ def _cursor_npx_prefix(package_root: Path) -> str:
     return str(package_root)
 
 
+def _link_node_modules(package_root: Path, npx_root: Path) -> None:
+    """Cloned repo scripts import @cursor/sdk; symlink image node_modules if needed."""
+    target = package_root / "node_modules"
+    source = npx_root / "node_modules"
+    if target.exists() or not source.is_dir():
+        return
+    target.symlink_to(source, target_is_directory=True)
+
+
 def create_fix_pr(
     check_fix_payload: dict[str, Any],
     *,
@@ -199,12 +208,13 @@ def generate_pr_meta(
     package_root = Path(os.getenv("SENTINEL_PACKAGE_ROOT", "/app"))
     script = _cursor_script_path(root, package_root)
     if api_key and script is not None:
-        npx_root = _cursor_npx_prefix(package_root)
-        work_dir = root if root.is_dir() else Path(npx_root)
+        npx_root = Path(_cursor_npx_prefix(package_root))
+        _link_node_modules(package_root, npx_root)
+        work_dir = root if root.is_dir() else npx_root
         cursor_timeout = 600 if os.getenv("CURSOR_AGENT_RUNTIME") == "cloud" else 300
         try:
             proc = subprocess.run(
-                ["npx", "--prefix", npx_root, "tsx", str(script)],
+                ["npx", "--prefix", str(npx_root), "tsx", str(script)],
                 input=json.dumps(payload),
                 capture_output=True,
                 text=True,
