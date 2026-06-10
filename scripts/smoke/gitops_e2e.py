@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from gitops.pr_creator import generate_pr_meta, sanitize_git_branch_slug
+from gitops.repo_bootstrap import ensure_clone
 
 
 def _fault_injection_payload() -> dict:
@@ -67,11 +68,21 @@ def run_fallback_e2e() -> None:
 
 
 def run_cursor_e2e() -> None:
-    """Optional live Cursor SDK call (requires CURSOR_API_KEY)."""
+    """Optional live Cursor SDK call (requires CURSOR_API_KEY; cloud or local runtime)."""
     if not os.getenv("CURSOR_API_KEY"):
         print("skip Cursor E2E: CURSOR_API_KEY not set", file=sys.stderr)
         return
-    meta = generate_pr_meta(_fault_injection_payload())
+    runtime = os.getenv("CURSOR_AGENT_RUNTIME", "").strip().lower()
+    root = None
+    if runtime != "cloud":
+        root = ensure_clone()
+        print(f"✓ infra-bootstrap clone at {root}", file=sys.stderr)
+    else:
+        print("✓ Cursor cloud runtime (repo cloned on Cursor VM)", file=sys.stderr)
+    meta = generate_pr_meta(
+        _fault_injection_payload(),
+        repo_root=root,
+    )
     if not meta.get("files"):
         print("⚠ Cursor returned no files (acceptable for dry-run)", file=sys.stderr)
     print("✓ Cursor generate_pr_meta OK")

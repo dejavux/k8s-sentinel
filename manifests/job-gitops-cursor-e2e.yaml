@@ -1,5 +1,7 @@
 ---
-# Live Cursor SDK E2E (fault-injection payload → generate_pr_meta).
+# Live Cursor SDK E2E — cloud Agent (Cursor-hosted VM), not local executor in pod.
+# initContainer clones k8s-sentinel@main so Job picks up gitops scripts without image rebuild.
+#
 # Usage:
 #   kubectl apply -f manifests/job-gitops-cursor-e2e.yaml
 #   kubectl logs -n kube-system -l phase=gitops-cursor-e2e -f
@@ -23,17 +25,51 @@ spec:
     spec:
       serviceAccountName: k8s-sentinel
       restartPolicy: Never
+      volumes:
+        - name: workspace
+          emptyDir: {}
+      initContainers:
+        - name: clone-sentinel
+          image: alpine/git:2.47.2
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: k8s-sentinel-secrets
+                  key: github-token
+            - name: SENTINEL_GIT_REF
+              value: main
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -euo pipefail
+              git clone --depth 1 --branch "${SENTINEL_GIT_REF}" \
+                "https://x-access-token:${GITHUB_TOKEN}@github.com/dejavux/k8s-sentinel.git" \
+                /workspace/k8s-sentinel
+              echo "cloned $(git -C /workspace/k8s-sentinel rev-parse --short HEAD)"
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
       containers:
         - name: e2e
           image: 10.101.22.227:5000/k8s-sentinel:v0.2.6
           imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
           command:
-            - python3
-            - /app/scripts/smoke/gitops_e2e.py
-            - --with-cursor
+            - /bin/bash
+            - -ec
+            - |
+              set -euo pipefail
+              export PYTHONPATH=/workspace/k8s-sentinel/scripts:/app/scripts
+              export NODE_PATH=/app/node_modules
+              export SENTINEL_PACKAGE_ROOT=/workspace/k8s-sentinel
+              export SENTINEL_GITHUB_REPO=dejavux/infra-bootstrap
+              export CURSOR_AGENT_RUNTIME=cloud
+              exec python3 /workspace/k8s-sentinel/scripts/smoke/gitops_e2e.py --with-cursor
           env:
-            - name: SENTINEL_PACKAGE_ROOT
-              value: /app
             - name: CURSOR_API_KEY
               valueFrom:
                 secretKeyRef:

@@ -4,6 +4,10 @@
  * Usage: echo '{"checks":{...}}' | npx tsx cursor_fix_pr.ts
  */
 import { Agent } from "@cursor/sdk";
+import {
+  formatAgentRuntimeLabel,
+  getAgentPromptOptions,
+} from "../lib/cursor-agent-runtime.js";
 import { getCursorModelOption } from "../lib/cursor-model.js";
 
 async function main() {
@@ -41,13 +45,13 @@ ${input.slice(0, 80000)}
 
 只包含需要提交到 repo 的修復檔案（manifest、playbook、腳本）。低風險 ConfigMap/deployment 修正可自動 merge。`;
 
-  const result = await Agent.prompt(prompt, {
-    apiKey,
-    model: getCursorModelOption(),
-  });
+  const agentOpts = getAgentPromptOptions(apiKey);
+  const result = await Agent.prompt(prompt, agentOpts);
 
   if (result.status !== "finished" || !result.result?.trim()) {
-    console.error(`Agent failed: ${result.status} model=${getCursorModelOption().id}`);
+    console.error(
+      `Agent failed: ${result.status} model=${getCursorModelOption().id} ${formatAgentRuntimeLabel()}`,
+    );
     process.exit(1);
   }
   const text = result.result.trim();
