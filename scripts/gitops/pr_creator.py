@@ -112,6 +112,26 @@ def is_auto_merge_eligible(files: list[dict[str, str]]) -> bool:
     return True
 
 
+def _cursor_script_path(root: Path, package_root: Path) -> Path | None:
+    candidates = [
+        package_root / "scripts/gitops/cursor_fix_pr.ts",
+        Path("/app/scripts/gitops/cursor_fix_pr.ts"),
+        root / "60_apps/k8s-sentinel/scripts/gitops/cursor_fix_pr.ts",
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
+
+
+def _cursor_npx_prefix(package_root: Path) -> str:
+    """Directory with node_modules for npx tsx (image /app vs cloned repo)."""
+    for prefix in (package_root, Path("/app"), package_root.parent):
+        if (prefix / "node_modules" / "@cursor" / "sdk").is_dir():
+            return str(prefix)
+    return str(package_root)
+
+
 def create_fix_pr(
     check_fix_payload: dict[str, Any],
     *,
@@ -177,14 +197,11 @@ def generate_pr_meta(
     root = repo_root or ROOT
     api_key = os.getenv("CURSOR_API_KEY")
     package_root = Path(os.getenv("SENTINEL_PACKAGE_ROOT", "/app"))
-    script = package_root / "scripts/gitops/cursor_fix_pr.ts"
-    if not script.is_file():
-        script = Path("/app/scripts/gitops/cursor_fix_pr.ts")
-    if not script.is_file():
-        script = root / "60_apps/k8s-sentinel/scripts/gitops/cursor_fix_pr.ts"
-    if api_key and script.is_file():
-        npx_root = str(script.parent.parent.parent)
+    script = _cursor_script_path(root, package_root)
+    if api_key and script is not None:
+        npx_root = _cursor_npx_prefix(package_root)
         work_dir = root if root.is_dir() else Path(npx_root)
+        cursor_timeout = 600 if os.getenv("CURSOR_AGENT_RUNTIME") == "cloud" else 300
         try:
             proc = subprocess.run(
                 ["npx", "--prefix", npx_root, "tsx", str(script)],
@@ -194,7 +211,7 @@ def generate_pr_meta(
                 check=False,
                 cwd=str(work_dir),
                 env={**os.environ, "CURSOR_API_KEY": api_key},
-                timeout=300,
+                timeout=cursor_timeout,
             )
             if proc.returncode == 0 and proc.stdout.strip():
                 return json.loads(proc.stdout.strip())
