@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 from json import JSONDecodeError
 from typing import Any
 
@@ -180,13 +181,25 @@ class PodCheck(BaseCheck):
                 continue
 
             if problem == "Pending":
-                actions.append(
-                    {
-                        "pod": ref,
-                        "action": "diagnosed_only",
-                        "events": issue.get("events", []),
-                    }
-                )
+                if self._tekton_scheduling_stuck(issue) and self._unstick_tekton_pending(
+                    issue
+                ):
+                    fixed.append(ref)
+                    actions.append(
+                        {
+                            "pod": ref,
+                            "action": "unstuck_tekton_workspace",
+                            "events": issue.get("events", []),
+                        }
+                    )
+                else:
+                    actions.append(
+                        {
+                            "pod": ref,
+                            "action": "diagnosed_only",
+                            "events": issue.get("events", []),
+                        }
+                    )
                 continue
 
             if problem == "NotReady":
@@ -615,6 +628,92 @@ class PodCheck(BaseCheck):
         if ok:
             self.logger.info("Force deleted terminating pod %s/%s", namespace, name)
         return ok
+
+    @staticmethod
+    def _tekton_scheduling_stuck(issue: dict[str, Any]) -> bool:
+        if issue.get("owner_kind") != "TaskRun":
+            return False
+        events = " ".join(issue.get("events") or []).lower()
+        markers = (
+            "pod affinity",
+            "insufficient cpu",
+            "failedscheduling",
+        )
+        return any(marker in events for marker in markers)
+
+    def _unstick_tekton_pending(self, issue: dict[str, Any]) -> bool:
+        namespace = issue.get("namespace", "")
+        if not namespace:
+            return False
+
+        infra_root = Path(
+            os.getenv("SENTINEL_INFRA_ROOT", "/workspace/infra-bootstrap")
+        )
+        script = Path(
+            os.getenv(
+                "SENTINEL_TEKTON_UNSTICK_SCRIPT",
+                str(
+                    infra_root
+                    / "60_apps/tekton-ci/scripts/unstick-tekton-pending-workspaces.sh"
+                ),
+            )
+        )
+        if not script.is_file():
+            self.logger.warning("Tekton unstick script not found: %s", script)
+            return False
+
+        pipelinerun = self._pipelinerun_from_taskrun(namespace, issue.get("owner_name"))
+        cmd = ["bash", str(script), "--namespace", namespace]
+        if pipelinerun:
+            cmd.extend(["--pipelinerun", pipelinerun])
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            self.logger.warning(
+                "Tekton unstick failed for %s/%s: %s",
+                namespace,
+                issue.get("name"),
+                proc.stderr[-500:],
+            )
+            return False
+        self.logger.info(
+            "Unstuck Tekton workspace for %s/%s (pipelinerun=%s)",
+            namespace,
+            issue.get("name"),
+            pipelinerun or "*",
+        )
+        return True
+
+    def _pipelinerun_from_taskrun(
+        self, namespace: str, taskrun_name: str | None
+    ) -> str | None:
+        if not namespace or not taskrun_name:
+            return None
+        proc = subprocess.run(
+            [
+                "kubectl",
+                "get",
+                "taskrun",
+                "-n",
+                namespace,
+                taskrun_name,
+                "-o",
+                "jsonpath={.metadata.labels.tekton\\.dev/pipelineRun}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        return proc.stdout.strip()
 
     def _restart_pod(self, namespace: str, name: str) -> bool:
         proc = subprocess.run(
