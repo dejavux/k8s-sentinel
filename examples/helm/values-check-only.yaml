@@ -1,0 +1,19 @@
+# Check-only install (public safe defaults)
+# helm upgrade --install k8s-sentinel ./charts/k8s-sentinel -f examples/helm/values-check-only.yaml -n kube-system
+
+config:
+  modules: runc,disk,pods,components,containerd,kubelet,resources
+  autoFix: false
+  autoPR: false
+
+ansible:
+  enabled: false
+
+gitops:
+  enabled: false
+
+onepassword:
+  enabled: false
+
+secrets:
+  create: false

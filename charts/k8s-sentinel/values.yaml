@@ -1,5 +1,5 @@
 # Default values — safe for public / check-only installs.
-# Cluster-specific overlays: values-3q-prod.yaml
+# See examples/helm/ for full-feature overlays.
 
 nameOverride: ""
 fullnameOverride: ""
@@ -8,7 +8,7 @@ namespace: kube-system
 
 image:
   repository: ghcr.io/dejavux/k8s-sentinel
-  tag: v0.2.4
+  tag: v0.2.7
   pullPolicy: IfNotPresent
 
 schedule: "*/30 * * * *"
@@ -20,11 +20,10 @@ ttlSecondsAfterFinished: 86400
 activeDeadlineSeconds: 2700
 backoffLimit: 0
 
-# CronJob container command (check | fix)
 command: check
 
 config:
-  modules: runc,disk,pods,components,containerd,kubelet
+  modules: runc,disk,pods,components,containerd,kubelet,resources
   autoFix: false
   autoPR: false
   autoMerge: false
@@ -34,34 +33,27 @@ config:
   diskWarnFail: true
   diskAnsible: false
   containerdAnsible: true
-  infraRoot: /workspace/infra-bootstrap
+  # Set when using monorepo playbooks (optional; bundled playbooks use packageRoot)
+  infraRoot: ""
   packageRoot: /app
   outputFile: /workspace/sentinel-results.json
-  # Optional Prometheus text file (EmptyDir; use with pushgatewayUrl for scrape)
   metricsFile: ""
-  # Push metrics after each check (recommended for CronJob batch jobs)
   pushgatewayUrl: ""
   pushgatewayJob: k8s-sentinel
-  # Cursor Agent model — mirrors infra-bootstrap .env CURSOR_AGENT_MODEL / CURSOR_MODEL
-  # "default" or "auto" = SDK Auto; "composer-2.5" = explicit model
   cursorAgentModel: ""
   cursorModel: ""
 
 ansible:
   enabled: false
-  # Existing ConfigMap name (key hosts.yml). Ignored if inventoryContent set.
   inventoryConfigMap: ""
-  # Inline inventory; chart creates ConfigMap when non-empty.
   inventoryContent: ""
   sshSecret: k8s-sentinel-ansible-ssh
-  remoteUser: light0
+  remoteUser: ""
   hostKeyChecking: "False"
   sshArgs: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"
-  # Use node network so in-cluster pod can SSH to 192.168.50.x bare-metal IPs.
   hostNetwork: false
 
 secrets:
-  # Use an existing Secret (keys cursor-api-key, github-token).
   existingSecret: ""
   create: false
   cursorApiKey: ""
@@ -69,7 +61,8 @@ secrets:
 
 onepassword:
   enabled: false
-  itemPath: vaults/Infra-CI/items/k8s-sentinel-credentials
+  # Example: vaults/MyVault/items/k8s-sentinel-credentials
+  itemPath: ""
 
 gitops:
   enabled: false
@@ -82,7 +75,7 @@ gitops:
 
 registry:
   endpoint: ""
-  svcHost: registry.docker-registry-internal.svc.cluster.local:5000
+  svcHost: ""
 
 resources:
   requests:

@@ -9,8 +9,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ROOT = Path(os.getenv("SENTINEL_INFRA_ROOT", "/workspace/infra-bootstrap"))
-DEFAULT_REPO = os.getenv("SENTINEL_GITHUB_REPO", "dejavux/infra-bootstrap")
+DEFAULT_ROOT = Path(os.getenv("SENTINEL_INFRA_ROOT", "/workspace/repo"))
+DEFAULT_REPO = os.getenv("SENTINEL_GITHUB_REPO", "").strip()
 DEFAULT_BRANCH = os.getenv("SENTINEL_GITHUB_BASE", "main")
 
 
@@ -22,7 +22,9 @@ def ensure_clone(
 ) -> Path:
     """Ensure infra-bootstrap exists at repo_root with origin configured."""
     root = repo_root or DEFAULT_ROOT
-    gh_repo = repo or DEFAULT_REPO
+    gh_repo = (repo or DEFAULT_REPO).strip()
+    if not gh_repo:
+        raise RuntimeError("SENTINEL_GITHUB_REPO is required for GitOps clone")
     base_branch = branch or DEFAULT_BRANCH
     token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
 

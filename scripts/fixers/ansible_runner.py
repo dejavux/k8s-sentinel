@@ -12,13 +12,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-INFRA_ROOT = Path(os.getenv("SENTINEL_INFRA_ROOT", "/workspace/infra-bootstrap"))
-PACKAGE_ROOT = Path(
-    os.getenv(
-        "SENTINEL_PACKAGE_ROOT",
-        str(INFRA_ROOT / "60_apps/k8s-sentinel"),
-    )
-)
+
+def _optional_path(env_name: str) -> Path | None:
+    raw = os.getenv(env_name, "").strip()
+    return Path(raw) if raw else None
+
+
+INFRA_ROOT = _optional_path("SENTINEL_INFRA_ROOT")
+PACKAGE_ROOT = Path(os.getenv("SENTINEL_PACKAGE_ROOT", "/app"))
 
 
 @dataclass
@@ -37,7 +38,7 @@ class AnsibleRunner:
     """Execute Ansible against baremetal / worker inventory."""
 
     def __init__(self, infra_root: Path | None = None):
-        self.infra_root = infra_root or INFRA_ROOT
+        self.infra_root = infra_root if infra_root is not None else INFRA_ROOT
         _ensure_ansible_ssh_key()
 
     def run_playbook(
@@ -48,8 +49,11 @@ class AnsibleRunner:
         extra_vars: dict | None = None,
         dry_run: bool = False,
     ) -> AnsibleResult:
-        """Run ansible-playbook relative to infra root."""
-        pb_path = self.infra_root / playbook
+        """Run ansible-playbook (infra-relative or bundled under packageRoot)."""
+        if self.infra_root and (self.infra_root / playbook).is_file():
+            pb_path = self.infra_root / playbook
+        else:
+            pb_path = _resolve_sentinel_playbook(Path(playbook).name)
         if not pb_path.is_file():
             return AnsibleResult(
                 success=False,
@@ -58,10 +62,14 @@ class AnsibleRunner:
                 returncode=127,
             )
 
-        inventory = os.getenv(
-            "ANSIBLE_INVENTORY",
-            str(self.infra_root / "40_k8s/inventory/hosts.yml"),
-        )
+        inventory = os.getenv("ANSIBLE_INVENTORY", "").strip()
+        if not inventory:
+            return AnsibleResult(
+                success=False,
+                message="ANSIBLE_INVENTORY is required for Ansible playbooks",
+                playbook=playbook,
+                returncode=127,
+            )
         cmd = [
             "ansible-playbook",
             "-i",
@@ -108,9 +116,21 @@ class AnsibleRunner:
         self, nodes: list[str], dry_run: bool = False
     ) -> AnsibleResult:
         """Run prune-ci-node-ephemeral.sh on workers via ansible script module."""
-        script = (
-            self.infra_root / "60_apps/tekton-ci/scripts/prune-ci-node-ephemeral.sh"
-        )
+        script_env = os.getenv("SENTINEL_PRUNE_SCRIPT", "").strip()
+        if script_env:
+            script = Path(script_env)
+        elif self.infra_root:
+            script = (
+                self.infra_root
+                / "60_apps/tekton-ci/scripts/prune-ci-node-ephemeral.sh"
+            )
+        else:
+            return AnsibleResult(
+                success=False,
+                message="SENTINEL_PRUNE_SCRIPT or SENTINEL_INFRA_ROOT required",
+                playbook="prune-ci-node-ephemeral",
+                returncode=127,
+            )
         if not script.is_file():
             return AnsibleResult(
                 success=False,
@@ -119,10 +139,14 @@ class AnsibleRunner:
                 returncode=127,
             )
 
-        inventory = os.getenv(
-            "ANSIBLE_INVENTORY",
-            str(self.infra_root / "40_k8s/inventory/hosts.yml"),
-        )
+        inventory = os.getenv("ANSIBLE_INVENTORY", "").strip()
+        if not inventory:
+            return AnsibleResult(
+                success=False,
+                message="ANSIBLE_INVENTORY is required",
+                playbook=str(script),
+                returncode=127,
+            )
         flag = "--dry-run" if dry_run else ""
         cmd = [
             "ansible",
@@ -155,7 +179,19 @@ class AnsibleRunner:
         )
 
     def deploy_disk_maintenance(self, limit: list[str] | None = None) -> AnsibleResult:
-        """Deploy baremetal disk maintenance cron via Ansible."""
+        """Deploy disk maintenance cron via Ansible (optional custom playbook)."""
+        custom = os.getenv("SENTINEL_DISK_PLAYBOOK", "").strip()
+        if custom:
+            return self._run_playbook_path(
+                Path(custom), limit=limit, extra_vars={"run_disk_cleanup_now": True}
+            )
+        if not self.infra_root:
+            return AnsibleResult(
+                success=False,
+                message="SENTINEL_DISK_PLAYBOOK or SENTINEL_INFRA_ROOT required",
+                playbook="deploy_disk_maintenance",
+                returncode=127,
+            )
         return self.run_playbook(
             "10_baremetal/playbooks/deploy_disk_maintenance.yml",
             limit=limit,
@@ -170,13 +206,8 @@ class AnsibleRunner:
             limit=limit,
             extra_vars={
                 "target_hosts": ",".join(limit) if limit else "k8s_cluster",
-                "registry_endpoint": os.getenv(
-                    "SENTINEL_REGISTRY_ENDPOINT", "10.101.22.227:5000"
-                ),
-                "registry_svc_host": os.getenv(
-                    "SENTINEL_REGISTRY_SVC_HOST",
-                    "registry.docker-registry-internal.svc.cluster.local:5000",
-                ),
+                "registry_endpoint": os.getenv("SENTINEL_REGISTRY_ENDPOINT", ""),
+                "registry_svc_host": os.getenv("SENTINEL_REGISTRY_SVC_HOST", ""),
             },
         )
 
@@ -499,7 +530,9 @@ def _ansible_env() -> dict[str, str]:
     """Ansible subprocess env (no 1Password agent in-cluster)."""
     env = {**os.environ}
     env.setdefault("ANSIBLE_HOST_KEY_CHECKING", "False")
-    env.setdefault("ANSIBLE_REMOTE_USER", "light0")
+    remote_user = os.getenv("ANSIBLE_REMOTE_USER", "").strip()
+    if remote_user:
+        env.setdefault("ANSIBLE_REMOTE_USER", remote_user)
     env.setdefault(
         "ANSIBLE_SSH_ARGS",
         "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "

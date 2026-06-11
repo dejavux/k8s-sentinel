@@ -1,7 +1,7 @@
 # K8s Sentinel — 公開 Repo 與跨專案整合規劃
 
-**版本**: v0.2.3-status  
-**日期**: 2026-06-09  
+**版本**: v0.2.7-phase-a  
+**日期**: 2026-06-11  
 **決策（2026-06-08）**：
 
 | 項目 | 決定 |
@@ -151,14 +151,18 @@ env:
 ### Phase A — 可公開 MVP（1–2 週）
 
 - [x] containerd / kubelet 檢查 + fix playbook
-- [x] Helm chart `charts/k8s-sentinel`（values 預設 check-only；3q overlay 在 `deploy/k8s-sentinel/`）
+- [x] Helm chart `charts/k8s-sentinel`（values 預設 check-only）
 - [x] `docs/INSTALL_HELM.md`
 - [x] 建立 **private** repo `dejavux/k8s-sentinel`（git submodule @ infra-bootstrap）
 - [x] CI：pytest + ruff（GHA `ci.yml`）
 - [x] infra-bootstrap `make install APP=sentinel` → Helm wrapper + Tekton build
-- [ ] `manifests/overlays/generic`（無 1Password 的 kustomize，可選）
-- [ ] CI 映像 push `ghcr.io`（**3q 延後**：內網 registry 足夠）
-- [ ] LICENSE（Apache-2.0）+ SECURITY.md — **公開當天**
+- [x] `manifests/overlays/generic` + `onepassword` examples
+- [x] `.github/workflows/release.yml` → ghcr.io on tag `v*`
+- [x] LICENSE（Apache-2.0）+ SECURITY.md + CONTRIBUTING.md + CHANGELOG.md
+- [x] 脫敏：Python/TS 無 infra-bootstrap 硬編；3q values 移出 chart
+- [x] `node_modules/` 移出版本庫；CI `npm ci`
+- [x] `docs/GO_TO_MARKET.md`（宣傳 / TA / grant）
+- [ ] **公開當天**：visibility → public + tag `v0.2.7` 驗證 ghcr
 
 **交付物**：任何人 `helm install` 即可跑 check-only。
 
@@ -240,10 +244,10 @@ gitops:
 
 ## 9. 下一步
 
-1. ~~Org / 授權~~ → `dejavux/k8s-sentinel` private + Apache-2.0  
-2. ~~Phase A Helm + 3q 驗收~~ → v0.2.3 穩定；`SENTINEL_MAX_OPEN_PRS=1`  
-3. **近期**：v0.2.4 + `resources` 模組；Helm `metricsFile`；Prometheus 接線  
-4. **可延後**：ghcr（C1.2）、公開 repo（C3）  
-5. 公開當天：`LICENSE`、SECURITY.md、visibility → public  
+1. ~~Phase A 技術準備~~ → 完成（2026-06-11）
+2. **公開當天**：Settings → Public、`git tag v0.2.7 && git push --tags`、驗證 ghcr
+3. 依 [GO_TO_MARKET.md](GO_TO_MARKET.md) Week 0 宣傳
+4. +30 天：1Password for Open Source 申請
+5. Phase B：Artifact Hub、跨 repo examples
 
-詳見 [INSTALL_HELM.md](INSTALL_HELM.md)、infra-bootstrap [deploy/k8s-sentinel/TODO.md](../../../deploy/k8s-sentinel/TODO.md)。
+詳見 [INSTALL_HELM.md](INSTALL_HELM.md)、[GO_TO_MARKET.md](GO_TO_MARKET.md)。

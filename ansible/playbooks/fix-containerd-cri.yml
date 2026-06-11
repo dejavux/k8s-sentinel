@@ -6,10 +6,8 @@
   hosts: "{{ target_hosts | default('k8s_cluster') }}"
   become: true
   vars:
-    registry_endpoint: "{{ registry_endpoint | default('10.101.22.227:5000') }}"
-    registry_svc_host: >-
-      {{ registry_svc_host
-         | default('registry.docker-registry-internal.svc.cluster.local:5000') }}
+    registry_endpoint: "{{ registry_endpoint | default('') }}"
+    registry_svc_host: "{{ registry_svc_host | default('') }}"
   tasks:
     - name: Remove legacy mirrors block (conflicts with config_path)
       ansible.builtin.blockinfile:

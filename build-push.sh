@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Build and push k8s-sentinel image to internal registry.
+# Build and push k8s-sentinel image.
 #
 # Usage:
-#   REGISTRY=registry-internal.3q.fi TAG=v0.1.0-dev ./build-push.sh
-#   REGISTRY=registry.docker-registry-internal.svc.cluster.local:5000 TAG=v0.1.0-dev ./build-push.sh
+#   TAG=v0.2.7 ./build-push.sh
+#   REGISTRY=ghcr.io/dejavux TAG=v0.2.7 ./build-push.sh
+#   REGISTRY=registry-internal.example.com TAG=v0.2.7 ./build-push.sh
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REGISTRY="${REGISTRY:-registry-internal.3q.fi}"
-TAG="${TAG:-v0.1.0-dev}"
+REGISTRY="${REGISTRY:-ghcr.io/dejavux}"
+TAG="${TAG:-latest}"
 IMAGE="${REGISTRY}/k8s-sentinel:${TAG}"
 
 echo "→ docker build -t ${IMAGE}"

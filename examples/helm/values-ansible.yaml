@@ -1,0 +1,22 @@
+# Ansible SSH remediation (requires inventory ConfigMap + SSH secret)
+# helm upgrade --install k8s-sentinel ./charts/k8s-sentinel -f examples/helm/values-ansible.yaml -n kube-system
+
+config:
+  autoFix: true
+  diskAnsible: true
+  containerdAnsible: true
+  # Optional: path to your infra repo inside the pod (for custom playbooks)
+  infraRoot: ""
+
+ansible:
+  enabled: true
+  hostNetwork: true
+  remoteUser: admin
+  inventoryConfigMap: k8s-sentinel-ansible-inventory
+  sshSecret: k8s-sentinel-ansible-ssh
+
+gitops:
+  enabled: false
+
+secrets:
+  existingSecret: k8s-sentinel-secrets

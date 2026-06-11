@@ -20,7 +20,10 @@ export function resolveCursorAgentRuntime(): CursorAgentRuntime {
 }
 
 export function getGithubRepoUrl(): string {
-  const repo = process.env.SENTINEL_GITHUB_REPO?.trim() || "dejavux/infra-bootstrap";
+  const repo = process.env.SENTINEL_GITHUB_REPO?.trim();
+  if (!repo) {
+    throw new Error("SENTINEL_GITHUB_REPO is required for GitOps");
+  }
   if (repo.startsWith("http://") || repo.startsWith("https://")) {
     return repo.replace(/\.git$/, "");
   }
