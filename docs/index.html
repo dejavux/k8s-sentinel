@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>k8s-sentinel — Self-hosted K8s auto-heal</title>
+  <meta name="description" content="Lightweight CronJob health checks and optional auto-healing for bare-metal and homelab Kubernetes clusters." />
+  <meta property="og:title" content="k8s-sentinel" />
+  <meta property="og:description" content="Heal your self-hosted Kubernetes cluster before you wake up." />
+  <meta property="og:url" content="https://dejavux.github.io/k8s-sentinel/" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡</text></svg>" />
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --surface: #121820;
+      --border: #243044;
+      --text: #e8eef7;
+      --muted: #8fa3bf;
+      --accent: #3d8bfd;
+      --accent2: #5eead4;
+      --danger: #f87171;
+      --ok: #4ade80;
+      --radius: 12px;
+      --max: 960px;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: var(--max); margin: 0 auto; padding: 0 1.25rem 4rem; }
+    header {
+      padding: 3rem 0 2rem;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 2.5rem;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.25rem 0.75rem;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      font-size: clamp(2rem, 5vw, 2.75rem);
+      line-height: 1.15;
+      margin: 0 0 1rem;
+      font-weight: 700;
+    }
+    .lead {
+      font-size: 1.15rem;
+      color: var(--muted);
+      max-width: 42rem;
+      margin: 0 auto 1.5rem;
+    }
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      justify-content: center;
+      margin-bottom: 1rem;
+    }
+    .btn {
+      display: inline-block;
+      padding: 0.65rem 1.1rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { filter: brightness(1.1); text-decoration: none; }
+    .btn-ghost { border: 1px solid var(--border); color: var(--text); }
+    .btn-ghost:hover { background: var(--surface); text-decoration: none; }
+    section { margin-bottom: 3rem; }
+    h2 { font-size: 1.35rem; margin: 0 0 1rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.1rem 1.25rem;
+    }
+    .card h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+    .card p { margin: 0; color: var(--muted); font-size: 0.92rem; }
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.9rem;
+    }
+    .flow span {
+      background: #1a2332;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.75rem;
+      white-space: nowrap;
+    }
+    .flow .arrow { color: var(--muted); border: none; background: none; padding: 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.65rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 600; }
+    tr:last-child td { border-bottom: none; }
+    .yes { color: var(--ok); }
+    .no { color: var(--muted); }
+    pre {
+      background: #0a0e13;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      margin: 0;
+    }
+    code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; }
+    .compare { font-size: 0.88rem; }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+    }
+    .pill-safe {
+      display: inline-block;
+      background: #14261a;
+      color: var(--ok);
+      border: 1px solid #1f4d2e;
+      border-radius: 6px;
+      padding: 0.15rem 0.5rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="badge">Apache-2.0 · homelab · bare-metal</div>
+      <h1>k8s-sentinel</h1>
+      <p class="lead">
+        A lightweight Kubernetes CronJob that heals your self-hosted cluster before you wake up —
+        disk pressure, containerd CRI, kube-proxy, and more — with optional Ansible SSH fixes.
+      </p>
+      <p><span class="pill-safe">Safe default: autoFix off</span></p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/dejavux/k8s-sentinel">GitHub</a>
+        <a class="btn btn-ghost" href="https://github.com/dejavux/k8s-sentinel/releases/tag/v0.2.7">v0.2.7 Release</a>
+        <a class="btn btn-ghost" href="https://github.com/dejavux/k8s-sentinel/blob/main/docs/INSTALL_HELM.md">Install guide</a>
+      </div>
+    </header>
+
+    <section>
+      <h2>The problem</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>3 AM disk full</h3>
+          <p>DiskPressure evicts workloads. Prometheus pages you; SSH is still manual.</p>
+        </div>
+        <div class="card">
+          <h3>containerd CRI drift</h3>
+          <p>Registry mirror config breaks the CRI plugin — nodes go Unknown.</p>
+        </div>
+        <div class="card">
+          <h3>System pods flapping</h3>
+          <p>kube-proxy and CoreDNS need restarts; cloud agents rarely SSH to metal.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>How it works</h2>
+      <div class="flow">
+        <span>CronJob (30m)</span>
+        <span class="arrow">→</span>
+        <span>7 check modules</span>
+        <span class="arrow">→</span>
+        <span>metrics + JSON</span>
+        <span class="arrow">→</span>
+        <span>optional kubectl fix</span>
+        <span class="arrow">→</span>
+        <span>optional Ansible SSH</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Modules</h2>
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <table>
+          <thead>
+            <tr><th>Module</th><th>Watches</th><th>Auto-fix</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>disk</code></td><td>DiskPressure, rootfs</td><td class="yes">✓ Ansible</td></tr>
+            <tr><td><code>containerd</code></td><td>CRI Unknown</td><td class="yes">✓ playbook</td></tr>
+            <tr><td><code>runc</code></td><td>Missing runc</td><td class="yes">✓ Ansible</td></tr>
+            <tr><td><code>kubelet</code></td><td>NotReady</td><td class="yes">✓ uncordon</td></tr>
+            <tr><td><code>components</code></td><td>kube-proxy, CoreDNS</td><td class="yes">✓ restart</td></tr>
+            <tr><td><code>pods</code></td><td>CrashLoop, Pending</td><td class="yes">✓ restart</td></tr>
+            <tr><td><code>resources</code></td><td>Memory / PID pressure</td><td class="no">alert only</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Who is it for?</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>✓ Homelab K8s</h3>
+          <p>k3s, kubeadm, Proxmox VMs — one Helm install, no SaaS bill.</p>
+        </div>
+        <div class="card">
+          <h3>✓ Bare-metal + SSH</h3>
+          <p>Host-level fixes where the Kubernetes API is not enough.</p>
+        </div>
+        <div class="card">
+          <h3>✗ Pure managed cloud</h3>
+          <p>No SSH to nodes? Host modules won't help.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Quick start (check-only)</h2>
+      <pre><code>helm upgrade --install k8s-sentinel oci://ghcr.io/dejavux/charts/k8s-sentinel \
+  --version 0.2.7 \
+  -n kube-system
+
+kubectl create job --from=cronjob/k8s-sentinel sentinel-check-$(date +%s) -n kube-system</code></pre>
+    </section>
+
+    <section>
+      <h2>Compare</h2>
+      <div class="card compare">
+        <table>
+          <thead>
+            <tr><th></th><th>k8s-sentinel</th><th>SaaS K8s ops</th><th>DIY scripts</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Self-hosted</td><td class="yes">✓</td><td class="no">✗</td><td class="yes">✓</td></tr>
+            <tr><td>SSH host repair</td><td class="yes">✓</td><td class="no">✗</td><td class="no">manual</td></tr>
+            <tr><td>Helm install</td><td class="yes">✓</td><td class="yes">agent</td><td class="no">custom</td></tr>
+            <tr><td>Cost</td><td>free OSS</td><td>$$</td><td>your time</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      <p>
+        <a href="https://github.com/dejavux/k8s-sentinel">Source</a> ·
+        <a href="https://github.com/dejavux/k8s-sentinel/blob/main/docs/PRODUCT.md">PRODUCT.md</a> ·
+        <a href="https://github.com/dejavux/k8s-sentinel/blob/main/SECURITY.md">Security</a>
+      </p>
+      <p>Apache-2.0 · <code>ghcr.io/dejavux/k8s-sentinel</code></p>
+    </footer>
+  </div>
+</body>
+</html>
