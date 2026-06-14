@@ -229,10 +229,13 @@ class ComponentsCheck(BaseCheck):
     def _pod_problem(self, pod: dict[str, Any]) -> str | None:
         status = pod.get("status", {})
         phase = status.get("phase", "")
-        if phase not in ("Running", "Succeeded"):
+        if phase == "Succeeded":
+            return None
+        if phase != "Running":
             return f"Pod phase: {phase}"
 
-        for container in status.get("containerStatuses") or []:
+        container_statuses = status.get("containerStatuses") or []
+        for container in container_statuses:
             state = container.get("state") or {}
             waiting = state.get("waiting") or {}
             reason = waiting.get("reason")
@@ -242,6 +245,11 @@ class ComponentsCheck(BaseCheck):
             term_reason = terminated.get("reason")
             if term_reason and term_reason != "Completed":
                 return f"Container terminated: {term_reason}"
+
+        if container_statuses and not all(
+            container.get("ready") for container in container_statuses
+        ):
+            return "Container not ready"
         return None
 
     def _restart_pod(
@@ -253,6 +261,8 @@ class ComponentsCheck(BaseCheck):
             args.extend(["--grace-period=0", "--force", "--ignore-not-found=true"])
         elif "CrashLoopBackOff" in reason or "Container waiting" in reason:
             args.extend(["--grace-period=5"])
+        elif "Container not ready" in reason:
+            args.extend(["--grace-period=10"])
         else:
             args.extend(["--grace-period=10"])
 

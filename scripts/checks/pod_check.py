@@ -41,6 +41,7 @@ DISK_EVICTION_MARKERS = (
 TERMINATING_MAX_SEC = int(os.getenv("SENTINEL_POD_TERMINATING_MAX_SEC", "3600"))
 PENDING_MAX_SEC = int(os.getenv("SENTINEL_POD_PENDING_MAX_SEC", "1800"))
 NOT_READY_MAX_SEC = int(os.getenv("SENTINEL_POD_NOT_READY_MAX_SEC", "900"))
+NOTREADY_AUTO_FIX_OWNER_KINDS = frozenset({"DaemonSet"})
 LOG_TAIL = int(os.getenv("SENTINEL_POD_LOG_TAIL", "40"))
 CONFIG_FILE_RE = re.compile(r"-config\.file=([^\s]+)")
 
@@ -190,7 +191,15 @@ class PodCheck(BaseCheck):
                 continue
 
             if problem == "NotReady":
-                actions.append({"pod": ref, "action": "diagnosed_only"})
+                if issue.get("auto_fixable"):
+                    if self._restart_pod(ns, name):
+                        fixed.append(ref)
+                        actions.append({"pod": ref, "action": "restarted"})
+                    else:
+                        failed.append(ref)
+                else:
+                    actions.append({"pod": ref, "action": "diagnosed_only"})
+                continue
 
         remaining = [i for i in issues if f"{i['namespace']}/{i['name']}" not in fixed]
         needs_gitops = any(i.get("needs_gitops") for i in remaining)
@@ -299,11 +308,14 @@ class PodCheck(BaseCheck):
             elif phase == "Running" and not self._pod_ready(pod):
                 age_sec = self._unready_age_seconds(pod, now)
                 if age_sec >= NOT_READY_MAX_SEC:
+                    owner_kind, _owner_name = self._owner(meta)
+                    auto_fixable = owner_kind in NOTREADY_AUTO_FIX_OWNER_KINDS
                     issue = self._issue(
                         pod,
                         problem="NotReady",
                         age_sec=age_sec,
-                        needs_gitops=True,
+                        needs_gitops=not auto_fixable,
+                        auto_fixable=auto_fixable,
                         extra={
                             "logs": self._pod_logs(ns, name),
                             "events": self._pod_events(ns, name),
