@@ -28,6 +28,9 @@ config:
   autoPR: false
   autoMerge: false
   maxOpenPrs: 1
+  gitopsModules: pods
+  cursorArchive: true
+  telegramNotify: false
   diskWarnPercent: 75
   diskErrorPercent: 85
   diskWarnFail: true

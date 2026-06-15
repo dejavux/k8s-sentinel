@@ -56,6 +56,12 @@ spec:
                   value: {{ .Values.config.autoMerge | quote }}
                 - name: SENTINEL_MAX_OPEN_PRS
                   value: {{ .Values.config.maxOpenPrs | quote }}
+                - name: SENTINEL_GITOPS_MODULES
+                  value: {{ .Values.config.gitopsModules | quote }}
+                - name: SENTINEL_CURSOR_ARCHIVE
+                  value: {{ .Values.config.cursorArchive | quote }}
+                - name: SENTINEL_TELEGRAM_NOTIFY
+                  value: {{ .Values.config.telegramNotify | quote }}
                 - name: SENTINEL_DISK_ANSIBLE
                   value: {{ .Values.config.diskAnsible | quote }}
                 - name: SENTINEL_CONTAINERD_ANSIBLE
@@ -111,6 +117,20 @@ spec:
                       name: {{ include "k8s-sentinel.secretName" . }}
                       key: github-token
                       optional: true
+                {{- if .Values.config.telegramNotify }}
+                - name: SENTINEL_TELEGRAM_BOT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "k8s-sentinel.secretName" . }}
+                      key: telegram-bot-token
+                      optional: true
+                - name: SENTINEL_TELEGRAM_CHAT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "k8s-sentinel.secretName" . }}
+                      key: telegram-chat-id
+                      optional: true
+                {{- end }}
                 {{- end }}
                 {{- if .Values.gitops.enabled }}
                 - name: SENTINEL_GITHUB_REPO

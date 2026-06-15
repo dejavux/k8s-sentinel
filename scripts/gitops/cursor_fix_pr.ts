@@ -7,8 +7,32 @@ import { Agent } from "@cursor/sdk";
 import {
   formatAgentRuntimeLabel,
   getAgentPromptOptions,
+  resolveCursorAgentRuntime,
 } from "../lib/cursor-agent-runtime.js";
 import { getCursorModelOption } from "../lib/cursor-model.js";
+
+function cursorArchiveEnabled(): boolean {
+  const raw = process.env.SENTINEL_CURSOR_ARCHIVE?.trim().toLowerCase();
+  if (raw === "false" || raw === "0" || raw === "off") {
+    return false;
+  }
+  return true;
+}
+
+async function archiveCloudAgent(agentId: string, apiKey: string): Promise<void> {
+  if (!cursorArchiveEnabled()) {
+    return;
+  }
+  if (resolveCursorAgentRuntime() !== "cloud") {
+    return;
+  }
+  try {
+    await Agent.archive(agentId, { apiKey });
+    console.error(`archived cloud agent ${agentId}`);
+  } catch (err) {
+    console.error(`archive failed for ${agentId}:`, err);
+  }
+}
 
 async function main() {
   const input = await new Promise<string>((resolve) => {
@@ -46,7 +70,10 @@ ${input.slice(0, 80000)}
 只包含需要提交到 repo 的修復檔案（manifest、playbook、腳本）。低風險 ConfigMap/deployment 修正可自動 merge。`;
 
   const agentOpts = getAgentPromptOptions(apiKey);
-  const result = await Agent.prompt(prompt, agentOpts);
+  await using agent = await Agent.create(agentOpts);
+  const run = await agent.send(prompt);
+  const result = await run.wait();
+  await archiveCloudAgent(agent.agentId, apiKey);
 
   if (result.status !== "finished" || !result.result?.trim()) {
     console.error(

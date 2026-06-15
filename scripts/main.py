@@ -23,8 +23,10 @@ from checks.kubelet_check import KubeletCheck
 from checks.pod_check import PodCheck
 from checks.resources_check import ResourcesCheck
 from checks.runc_check import RuncCheck
+from gitops.eligibility import should_create_fix_pr
 from gitops.pr_creator import create_fix_pr
 from gitops.repo_bootstrap import ensure_clone
+from notify.telegram import maybe_send_telegram_summary
 from metrics.prometheus import render_prometheus_metrics
 from metrics.pushgateway import push_prometheus_metrics
 
@@ -128,41 +130,19 @@ def run_fixes(
     return fix_results
 
 
-def should_create_fix_pr(
-    check_results: Dict[str, Any], fix_results: Dict[str, Any]
-) -> bool:
-    """Return True when GitOps PR should be opened."""
-    if os.getenv("SENTINEL_AUTO_PR", "false").lower() != "true":
-        return False
-
-    pods = check_results.get("pods")
-    if pods is not None and not pods.is_healthy():
-        details = pods.details or {}
-        if details.get("needs_gitops"):
-            return True
-        fix = fix_results.get("pods")
-        if fix and fix.details and fix.details.get("needs_gitops"):
-            return True
-
-    if fix_results and any(not r.success for r in fix_results.values()):
-        return True
-
-    return False
-
-
 def maybe_create_fix_pr(
     check_results: Dict[str, Any], fix_results: Dict[str, Any]
-) -> None:
+) -> Optional[Dict[str, Any]]:
     """Phase 4: Cursor SDK + gh PR when SENTINEL_AUTO_PR=true."""
     if not should_create_fix_pr(check_results, fix_results):
         logger.info("Skipping auto PR (no GitOps-worthy issues)")
-        return
+        return None
 
     try:
         ensure_clone()
     except (subprocess.CalledProcessError, OSError, RuntimeError) as exc:
         logger.exception("Repo bootstrap failed: %s", exc)
-        return
+        return {"success": False, "message": str(exc)}
 
     payload = {
         "timestamp": datetime.utcnow().isoformat(),
@@ -174,7 +154,7 @@ def maybe_create_fix_pr(
         result = create_fix_pr(payload, auto_merge=auto_merge)
     except (subprocess.CalledProcessError, OSError, json.JSONDecodeError) as exc:
         logger.exception("Auto PR failed: %s", exc)
-        return
+        return {"success": False, "message": str(exc)}
     if result.get("success"):
         logger.info("PR created: %s", result.get("pr_url"))
         if result.get("merged"):
@@ -183,6 +163,7 @@ def maybe_create_fix_pr(
             logger.info("Auto-merge skipped: %s", result.get("auto_merge_skipped"))
     else:
         logger.warning("PR not created: %s", result.get("message"))
+    return result
 
 
 def save_results(
@@ -252,6 +233,7 @@ def main() -> int:
     if args.command == "check":
         check_results = run_checks(args.modules)
         fix_results = None
+        pr_result: Optional[Dict[str, Any]] = None
 
         if args.auto_fix or os.getenv("SENTINEL_AUTO_FIX", "false").lower() == "true":
             disk_check = CheckRegistry.get("disk")
@@ -260,7 +242,7 @@ def main() -> int:
                 logger.info("Pruned %d stale pod(s) cluster-wide", pruned)
             fix_results = run_fixes(check_results, args.modules)
             if fix_results:
-                maybe_create_fix_pr(check_results, fix_results)
+                pr_result = maybe_create_fix_pr(check_results, fix_results)
             logger.info("Re-running checks after auto-fix...")
             check_results = run_checks(args.modules)
             if any(r.status == "error" for r in check_results.values()):
@@ -271,6 +253,9 @@ def main() -> int:
                 check_results = run_checks(args.modules)
 
         save_results(check_results, fix_results)
+        maybe_send_telegram_summary(
+            check_results, fix_results, pr_result=pr_result
+        )
         has_errors = any(r.status == "error" for r in check_results.values())
         disk = check_results.get("disk")
         fail_on_disk_warn = (
@@ -282,10 +267,13 @@ def main() -> int:
     if args.command == "fix":
         check_results = run_checks(args.modules)
         fix_results = run_fixes(check_results, args.modules)
-        save_results(check_results, fix_results)
-
+        pr_result = None
         if fix_results:
-            maybe_create_fix_pr(check_results, fix_results)
+            pr_result = maybe_create_fix_pr(check_results, fix_results)
+        save_results(check_results, fix_results)
+        maybe_send_telegram_summary(
+            check_results, fix_results, pr_result=pr_result
+        )
 
         has_failures = any(not r.success for r in fix_results.values())
         return 1 if has_failures else 0
