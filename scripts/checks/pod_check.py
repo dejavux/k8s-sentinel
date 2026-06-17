@@ -38,6 +38,12 @@ DISK_EVICTION_MARKERS = (
     "emptydir",
 )
 
+PVC_DISK_FULL_MARKERS = (
+    "no space left on device",
+    "errno 28",
+    "enospc",
+)
+
 TERMINATING_MAX_SEC = int(os.getenv("SENTINEL_POD_TERMINATING_MAX_SEC", "3600"))
 PENDING_MAX_SEC = int(os.getenv("SENTINEL_POD_PENDING_MAX_SEC", "1800"))
 NOT_READY_MAX_SEC = int(os.getenv("SENTINEL_POD_NOT_READY_MAX_SEC", "900"))
@@ -173,6 +179,19 @@ class PodCheck(BaseCheck):
                     continue
 
             if problem in PROBLEM_REASONS:
+                if issue.get("pvc_disk_full"):
+                    actions.append(
+                        {
+                            "pod": ref,
+                            "action": "diagnosed_only",
+                            "reason": "pvc_disk_full",
+                            "remediation": (
+                                "40_k8s/playbooks/maintenance/"
+                                "free-grid-bot-shared-services-storage.yml"
+                            ),
+                        }
+                    )
+                    continue
                 if self._restart_pod(ns, name):
                     fixed.append(ref)
                     actions.append({"pod": ref, "action": "restarted"})
@@ -300,7 +319,12 @@ class PodCheck(BaseCheck):
                         "events": self._pod_events(ns, name),
                     },
                 )
-                cm_hint = self._configmap_mismatch(pod, issue.get("logs", ""))
+                logs = issue.get("logs", "")
+                if self._logs_indicate_pvc_full(logs):
+                    issue["pvc_disk_full"] = True
+                    issue["auto_fixable"] = False
+                    issue["needs_gitops"] = True
+                cm_hint = self._configmap_mismatch(pod, logs)
                 if cm_hint:
                     issue["configmap_mismatch"] = cm_hint
                     issue["needs_gitops"] = True
@@ -586,6 +610,11 @@ class PodCheck(BaseCheck):
     def _is_disk_eviction(message: str) -> bool:
         lowered = message.lower()
         return any(marker in lowered for marker in DISK_EVICTION_MARKERS)
+
+    @staticmethod
+    def _logs_indicate_pvc_full(logs: str) -> bool:
+        lowered = logs.lower()
+        return any(marker in lowered for marker in PVC_DISK_FULL_MARKERS)
 
     @staticmethod
     def _events_indicate_disk_pressure(events: list[str]) -> bool:
