@@ -176,6 +176,7 @@ Tag `v*` → [release workflow](.github/workflows/release.yml):
 | [Product one-pager](https://dejavux.github.io/k8s-sentinel/) | Visual overview (GitHub Pages) |
 | [PRODUCT.md](docs/PRODUCT.md) | Same content in Markdown |
 | [INSTALL_HELM.md](docs/INSTALL_HELM.md) | Install guide |
+| [POD_DESIGN.md](docs/POD_DESIGN.md) | Pod / CronJob / GitOps 設計（原 infra-bootstrap planning） |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | [CHANGELOG.md](CHANGELOG.md) | Release notes |
