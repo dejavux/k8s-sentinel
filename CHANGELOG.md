@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.11] - 2026-06-27
+
+### Fixed
+
+- Helm ClusterRole: grant `batch/jobs` and `batch/cronjobs` list for `cronjobs` module
+
 ## [0.2.10] - 2026-06-27
 
 ### Added
