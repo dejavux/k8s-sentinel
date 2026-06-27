@@ -270,12 +270,24 @@ class CronJobsCheck(BaseCheck):
         return os.getenv("SENTINEL_CRONJOB_CLEANUP_STALE", "true").lower() == "true"
 
     def fix(self, check_result: CheckResult) -> FixResult:
-        stale_jobs = (check_result.details or {}).get("stale_jobs") or []
-        if not stale_jobs:
+        details = check_result.details or {}
+        to_delete: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for key in ("stale_jobs", "failed_jobs"):
+            for row in details.get(key) or []:
+                namespace = row.get("namespace") or ""
+                name = row.get("job") or ""
+                label = f"{namespace}/{name}"
+                if not namespace or not name or label in seen:
+                    continue
+                seen.add(label)
+                to_delete.append({"namespace": namespace, "job": name})
+
+        if not to_delete:
             return FixResult(
                 module=self.name,
                 success=True,
-                message="No stale failed jobs to delete",
+                message="No failed jobs to delete",
                 fixed_nodes=[],
                 failed_nodes=[],
                 details={"deleted": 0},
@@ -283,11 +295,9 @@ class CronJobsCheck(BaseCheck):
 
         deleted: list[str] = []
         errors: list[str] = []
-        for row in stale_jobs:
-            namespace = row.get("namespace") or ""
-            name = row.get("job") or ""
-            if not namespace or not name:
-                continue
+        for row in to_delete:
+            namespace = row["namespace"]
+            name = row["job"]
             proc = subprocess.run(
                 ["kubectl", "delete", "job", name, "-n", namespace, "--ignore-not-found"],
                 capture_output=True,
@@ -298,7 +308,7 @@ class CronJobsCheck(BaseCheck):
             label = f"{namespace}/{name}"
             if proc.returncode == 0:
                 deleted.append(label)
-                self.logger.info("Deleted stale failed job %s", label)
+                self.logger.info("Deleted failed job %s", label)
             else:
                 err = (proc.stderr or proc.stdout or "delete failed").strip()
                 errors.append(f"{label}: {err}")
@@ -306,7 +316,7 @@ class CronJobsCheck(BaseCheck):
         return FixResult(
             module=self.name,
             success=not errors,
-            message=f"Deleted {len(deleted)} stale failed job(s)",
+            message=f"Deleted {len(deleted)} failed job object(s)",
             fixed_nodes=deleted,
             failed_nodes=errors,
             details={"deleted": len(deleted), "errors": errors},

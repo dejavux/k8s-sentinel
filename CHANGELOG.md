@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.13] - 2026-06-28
+
+### Fixed
+
+- `cronjobs` auto-fix now deletes recent failed Job objects too (clears status=1 after alert)
+- Avoid duplicate SentinelModuleWarning noise for cronjobs (Telegram + CronJobFailed cover it)
+
 ## [0.2.12] - 2026-06-27
 
 ### Fixed

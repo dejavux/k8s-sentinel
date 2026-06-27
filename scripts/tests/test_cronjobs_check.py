@@ -95,9 +95,12 @@ class CronJobsCheckTests(unittest.TestCase):
         check = CronJobsCheck()
         check_result = CheckResult(
             module="cronjobs",
-            status="ok",
-            message="ok",
-            details={"stale_jobs": [{"namespace": "default", "job": "old-job"}]},
+            status="warning",
+            message="warn",
+            details={
+                "stale_jobs": [{"namespace": "default", "job": "old-job"}],
+                "failed_jobs": [{"namespace": "ns", "job": "recent-job"}],
+            },
         )
         with patch("checks.cronjobs_check.subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
@@ -105,7 +108,8 @@ class CronJobsCheckTests(unittest.TestCase):
             mock_run.return_value.stderr = ""
             fix = check.fix(check_result)
         self.assertTrue(fix.success)
-        self.assertEqual(fix.details["deleted"], 1)
+        self.assertEqual(fix.details["deleted"], 2)
+        self.assertEqual(mock_run.call_count, 2)
 
 
 if __name__ == "__main__":
