@@ -45,7 +45,7 @@ rules:
   # cronjobs module: failed Job diagnostics (alert-only)
   - apiGroups: ["batch"]
     resources: ["jobs", "cronjobs"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

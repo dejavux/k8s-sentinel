@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.12] - 2026-06-27
+
+### Fixed
+
+- `cronjobs` module only alerts on failures within `SENTINEL_CRONJOB_MAX_AGE_HOURS` (default 48h)
+- Auto-fix deletes stale failed Job objects older than max age (when `SENTINEL_CRONJOB_CLEANUP_STALE=true`)
+- Skip manual `k8s-sentinel-*` test jobs; RBAC adds `batch/jobs` delete
+
 ## [0.2.11] - 2026-06-27
 
 ### Fixed
