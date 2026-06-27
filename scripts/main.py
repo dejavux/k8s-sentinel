@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from checks import CheckRegistry
 from checks.components_check import ComponentsCheck
 from checks.containerd_check import ContainerdCheck
+from checks.cronjobs_check import CronJobsCheck
 from checks.disk_check import DiskCheck
 from checks.kubelet_check import KubeletCheck
 from checks.pod_check import PodCheck
@@ -47,6 +48,7 @@ def register_checks() -> None:
     CheckRegistry.register(ContainerdCheck())
     CheckRegistry.register(KubeletCheck())
     CheckRegistry.register(ResourcesCheck())
+    CheckRegistry.register(CronJobsCheck())
 
     logger.info("Registered %d check modules", len(CheckRegistry.list_all()))
 

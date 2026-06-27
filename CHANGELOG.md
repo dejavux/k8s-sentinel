@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.10] - 2026-06-27
+
+### Added
+
+- `cronjobs` check module: failed Job / CronJob diagnostics with log snippets (alert-only)
+- Known log pattern hints (`mapfile`, `BackoffLimitExceeded`, Prometheus scrape false positives)
+
 ## [0.2.9] - 2026-06-15
 
 ### Added

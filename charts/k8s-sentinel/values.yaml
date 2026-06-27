@@ -8,7 +8,7 @@ namespace: kube-system
 
 image:
   repository: ghcr.io/dejavux/k8s-sentinel
-  tag: v0.2.7
+  tag: v0.2.10
   pullPolicy: IfNotPresent
 
 schedule: "*/30 * * * *"
@@ -23,7 +23,7 @@ backoffLimit: 0
 command: check
 
 config:
-  modules: runc,disk,pods,components,containerd,kubelet,resources
+  modules: runc,disk,pods,components,containerd,kubelet,resources,cronjobs
   autoFix: false
   autoPR: false
   autoMerge: false
