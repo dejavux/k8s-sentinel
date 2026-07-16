@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import MagicMock, patch
 
 from checks.pod_check import PodCheck
 
@@ -86,6 +87,58 @@ class PodCheckPendingDiagnosticsTests(unittest.TestCase):
         self.assertEqual(diag["resource_requests"], {"cpu": "100m", "memory": "128Mi"})
         self.assertEqual(diag["pvc_claims"], ["vpn-data"])
         self.assertIn("affinity", diag["scheduling_message"])
+
+
+class PodCheckPendingFixTests(unittest.TestCase):
+    """PodCheck._try_fix_pending remediation paths."""
+
+    def setUp(self) -> None:
+        self.check = PodCheck()
+
+    @patch.object(PodCheck, "_apply_missing_node_labels")
+    @patch.object(PodCheck, "_restart_pod", return_value=True)
+    def test_node_affinity_labels_node_and_restarts(
+        self, _mock_restart: MagicMock, mock_label: MagicMock
+    ) -> None:
+        def _label(issue: dict) -> bool:
+            issue["labeled_node"] = "worker-1"
+            return True
+
+        mock_label.side_effect = _label
+        issue = {
+            "namespace": "vpn-egress",
+            "name": "vpn-verify",
+            "pending_category": "node_affinity",
+            "node_selector": {"vpn-egress": "true"},
+        }
+        result = self.check._try_fix_pending(issue)
+        self.assertEqual(
+            result, ("labeled_node_and_restarted", {"labeled_node": "worker-1"})
+        )
+
+    @patch.object(PodCheck, "_rollout_restart_deployment", return_value=True)
+    def test_deployment_pending_rollout_restart(
+        self, _mock_rollout: MagicMock
+    ) -> None:
+        issue = {
+            "namespace": "vpn-egress",
+            "name": "vpn-verify-abc",
+            "pending_category": "unknown",
+            "owner_kind": "Deployment",
+            "owner_name": "vpn-verify",
+        }
+        result = self.check._try_fix_pending(issue)
+        self.assertEqual(result, ("rollout_restart", {}))
+
+    @patch.object(PodCheck, "_restart_pod", return_value=True)
+    def test_disk_pressure_restarts_pod(self, _mock_restart: MagicMock) -> None:
+        issue = {
+            "namespace": "vpn-egress",
+            "name": "vpn-verify",
+            "pending_category": "disk_pressure",
+        }
+        result = self.check._try_fix_pending(issue)
+        self.assertEqual(result, ("restarted_after_disk_pressure", {}))
 
 
 if __name__ == "__main__":

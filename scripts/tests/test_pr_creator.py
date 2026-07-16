@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from gitops.pr_creator import (
+    build_fallback_pr_meta,
     count_open_sentinel_prs,
     generate_pr_meta,
     open_sentinel_pr_limit_reached,
@@ -62,6 +63,69 @@ class GeneratePrMetaTests(unittest.TestCase):
             meta = generate_pr_meta(payload)
         self.assertIn("pods", meta["title"])
         self.assertTrue(meta["branch"].startswith("sentinel/fix-"))
+
+
+class BuildFallbackPrMetaTests(unittest.TestCase):
+    """build_fallback_pr_meta produces runbook files for Pending pods."""
+
+    def test_pending_issue_produces_runbook_file(self) -> None:
+        payload = {
+            "checks": {
+                "pods": {
+                    "status": "warning",
+                    "details": {
+                        "issues": [
+                            {
+                                "namespace": "vpn-egress",
+                                "name": "vpn-verify",
+                                "problem": "Pending",
+                                "pending_category": "node_affinity",
+                                "node_selector": {"vpn-egress": "true"},
+                                "scheduling_message": "didn't match pod's node affinity",
+                                "events": ["FailedScheduling: node affinity"],
+                            }
+                        ]
+                    },
+                }
+            }
+        }
+        meta = build_fallback_pr_meta(payload)
+        self.assertTrue(meta["files"])
+        self.assertIn("vpn-egress", meta["files"][0]["path"])
+        self.assertIn("vpn-verify", meta["files"][0]["content"])
+        self.assertIn("kubectl label node", meta["files"][0]["content"])
+
+    def test_generate_pr_meta_uses_fallback_when_cursor_empty(self) -> None:
+        payload = {
+            "checks": {
+                "pods": {
+                    "details": {
+                        "issues": [
+                            {
+                                "namespace": "vpn-egress",
+                                "name": "vpn-verify",
+                                "problem": "Pending",
+                                "pending_category": "unknown",
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        with patch("gitops.pr_creator.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout='{"title":"x","body":"y","branch":"sentinel/fix-x","files":[]}',
+                stderr="",
+            )
+            with patch.dict(os.environ, {"CURSOR_API_KEY": "test-key"}):
+                with patch(
+                    "gitops.pr_creator._cursor_script_path",
+                    return_value=MagicMock(is_file=lambda: True),
+                ):
+                    meta = generate_pr_meta(payload)
+        self.assertTrue(meta.get("files"))
+        self.assertIn("runbooks", meta["files"][0]["path"])
 
 
 if __name__ == "__main__":

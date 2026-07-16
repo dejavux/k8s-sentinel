@@ -13,9 +13,11 @@ import re
 import subprocess
 from datetime import datetime, timezone
 from json import JSONDecodeError
+from pathlib import Path
 from typing import Any
 
 from .base import BaseCheck, CheckResult, FixResult
+from .kubectl_nodes import get_nodes_json, node_ready, node_schedulable
 
 PROBLEM_REASONS = frozenset(
     {
@@ -41,7 +43,7 @@ DISK_EVICTION_MARKERS = (
 TERMINATING_MAX_SEC = int(os.getenv("SENTINEL_POD_TERMINATING_MAX_SEC", "3600"))
 PENDING_MAX_SEC = int(os.getenv("SENTINEL_POD_PENDING_MAX_SEC", "1800"))
 NOT_READY_MAX_SEC = int(os.getenv("SENTINEL_POD_NOT_READY_MAX_SEC", "900"))
-NOTREADY_AUTO_FIX_OWNER_KINDS = frozenset({"DaemonSet"})
+NOTREADY_AUTO_FIX_OWNER_KINDS = frozenset({"DaemonSet", "Deployment"})
 LOG_TAIL = int(os.getenv("SENTINEL_POD_LOG_TAIL", "40"))
 CONFIG_FILE_RE = re.compile(r"-config\.file=([^\s]+)")
 
@@ -181,19 +183,40 @@ class PodCheck(BaseCheck):
                 continue
 
             if problem == "Pending":
-                actions.append(
-                    {
-                        "pod": ref,
-                        "action": "diagnosed_only",
-                        "pending_category": issue.get("pending_category"),
-                        "scheduling_message": issue.get("scheduling_message"),
-                        "events": issue.get("events", []),
-                    }
-                )
+                pending_action = self._try_fix_pending(issue)
+                if pending_action:
+                    action_name, extra = pending_action
+                    fixed.append(ref)
+                    actions.append(
+                        {
+                            "pod": ref,
+                            "action": action_name,
+                            "pending_category": issue.get("pending_category"),
+                            "scheduling_message": issue.get("scheduling_message"),
+                            "events": issue.get("events", []),
+                            **extra,
+                        }
+                    )
+                else:
+                    actions.append(
+                        {
+                            "pod": ref,
+                            "action": "diagnosed_only",
+                            "pending_category": issue.get("pending_category"),
+                            "scheduling_message": issue.get("scheduling_message"),
+                            "events": issue.get("events", []),
+                        }
+                    )
                 continue
 
             if problem == "NotReady":
-                if issue.get("auto_fixable"):
+                if issue.get("owner_kind") == "Deployment":
+                    if self._rollout_restart_deployment(issue):
+                        fixed.append(ref)
+                        actions.append({"pod": ref, "action": "rollout_restart"})
+                    else:
+                        failed.append(ref)
+                elif issue.get("auto_fixable"):
                     if self._restart_pod(ns, name):
                         fixed.append(ref)
                         actions.append({"pod": ref, "action": "restarted"})
@@ -314,11 +337,12 @@ class PodCheck(BaseCheck):
                 if age_sec >= NOT_READY_MAX_SEC:
                     owner_kind, _owner_name = self._owner(meta)
                     auto_fixable = owner_kind in NOTREADY_AUTO_FIX_OWNER_KINDS
+                    needs_gitops = owner_kind not in NOTREADY_AUTO_FIX_OWNER_KINDS
                     issue = self._issue(
                         pod,
                         problem="NotReady",
                         age_sec=age_sec,
-                        needs_gitops=not auto_fixable,
+                        needs_gitops=needs_gitops,
                         auto_fixable=auto_fixable,
                         extra={
                             "logs": self._pod_logs(ns, name),
@@ -327,6 +351,45 @@ class PodCheck(BaseCheck):
                     )
 
         return issue
+
+    def _try_fix_pending(
+        self, issue: dict[str, Any]
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Attempt cluster-safe remediation for stuck Pending pods."""
+        ns = issue.get("namespace", "")
+        name = issue.get("name", "")
+        category = issue.get("pending_category", "unknown")
+
+        if self._tekton_scheduling_stuck(issue) and self._unstick_tekton_pending(
+            issue
+        ):
+            return ("unstuck_tekton_workspace", {})
+
+        if category == "node_cordoned" and self._uncordon_nodes_for_pending(issue):
+            if self._restart_pod(ns, name):
+                return ("uncordoned_and_restarted", {})
+
+        if category == "node_affinity" and self._apply_missing_node_labels(issue):
+            if self._restart_pod(ns, name):
+                labeled = issue.get("labeled_node")
+                return (
+                    "labeled_node_and_restarted",
+                    {"labeled_node": labeled} if labeled else {},
+                )
+
+        if category == "disk_pressure" and self._restart_pod(ns, name):
+            return ("restarted_after_disk_pressure", {})
+
+        owner = issue.get("owner_kind")
+        if owner == "Deployment" and self._rollout_restart_deployment(issue):
+            return ("rollout_restart", {})
+
+        if owner in {"ReplicaSet", "Job", "StatefulSet"} and self._restart_pod(
+            ns, name
+        ):
+            return ("restarted", {})
+
+        return None
 
     def _is_own_sentinel_batch_pod(self, pod: dict[str, Any]) -> bool:
         """True for kube-system k8s-sentinel workload pods owned by a Job."""
@@ -673,6 +736,273 @@ class PodCheck(BaseCheck):
         if "schedulingdisabled" in combined or "cordoned" in combined:
             return "node_cordoned"
         return "unknown"
+
+    @staticmethod
+    def _tekton_scheduling_stuck(issue: dict[str, Any]) -> bool:
+        if issue.get("owner_kind") != "TaskRun":
+            return False
+        events = " ".join(issue.get("events") or []).lower()
+        markers = (
+            "pod affinity",
+            "insufficient cpu",
+            "failedscheduling",
+        )
+        return any(marker in events for marker in markers)
+
+    def _unstick_tekton_pending(self, issue: dict[str, Any]) -> bool:
+        namespace = issue.get("namespace", "")
+        if not namespace:
+            return False
+
+        infra_root = Path(
+            os.getenv("SENTINEL_INFRA_ROOT", "/workspace/infra-bootstrap")
+        )
+        script = Path(
+            os.getenv(
+                "SENTINEL_TEKTON_UNSTICK_SCRIPT",
+                str(
+                    infra_root
+                    / "60_apps/tekton-ci/scripts/unstick-tekton-pending-workspaces.sh"
+                ),
+            )
+        )
+        if not script.is_file():
+            self.logger.warning("Tekton unstick script not found: %s", script)
+            return False
+
+        pipelinerun = self._pipelinerun_from_taskrun(namespace, issue.get("owner_name"))
+        cmd = ["bash", str(script), "--namespace", namespace]
+        if pipelinerun:
+            cmd.extend(["--pipelinerun", pipelinerun])
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            self.logger.warning(
+                "Tekton unstick failed for %s/%s: %s",
+                namespace,
+                issue.get("name"),
+                proc.stderr[-500:],
+            )
+            return False
+        self.logger.info(
+            "Unstuck Tekton workspace for %s/%s (pipelinerun=%s)",
+            namespace,
+            issue.get("name"),
+            pipelinerun or "*",
+        )
+        return True
+
+    def _pipelinerun_from_taskrun(
+        self, namespace: str, taskrun_name: str | None
+    ) -> str | None:
+        if not namespace or not taskrun_name:
+            return None
+        proc = subprocess.run(
+            [
+                "kubectl",
+                "get",
+                "taskrun",
+                "-n",
+                namespace,
+                taskrun_name,
+                "-o",
+                "jsonpath={.metadata.labels.tekton\\.dev/pipelineRun}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        return proc.stdout.strip()
+
+    def _deployment_name_from_issue(self, issue: dict[str, Any]) -> str | None:
+        owner_kind = issue.get("owner_kind")
+        owner_name = issue.get("owner_name")
+        ns = issue.get("namespace", "")
+        if owner_kind == "Deployment" and owner_name:
+            return owner_name
+        if owner_kind != "ReplicaSet" or not owner_name or not ns:
+            return None
+        proc = subprocess.run(
+            [
+                "kubectl",
+                "get",
+                "rs",
+                "-n",
+                ns,
+                owner_name,
+                "-o",
+                "jsonpath={.metadata.ownerReferences[?(@.kind=='Deployment')].name}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        return proc.stdout.strip()
+
+    def _rollout_restart_deployment(self, issue: dict[str, Any]) -> bool:
+        deploy = self._deployment_name_from_issue(issue)
+        ns = issue.get("namespace", "")
+        if not deploy or not ns:
+            return False
+        proc = subprocess.run(
+            [
+                "kubectl",
+                "rollout",
+                "restart",
+                "deployment",
+                deploy,
+                "-n",
+                ns,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        ok = proc.returncode == 0
+        if ok:
+            self.logger.info("Rollout restart deployment %s/%s", ns, deploy)
+        else:
+            self.logger.warning(
+                "Rollout restart failed for %s/%s: %s",
+                ns,
+                deploy,
+                proc.stderr[-300:],
+            )
+        return ok
+
+    def _uncordon_nodes_for_pending(self, issue: dict[str, Any]) -> bool:
+        del issue  # events-based cordon detection is future work
+        cordoned = [
+            n.get("metadata", {}).get("name", "")
+            for n in get_nodes_json()
+            if n.get("metadata", {}).get("name")
+            and node_ready(n)
+            and not node_schedulable(n)
+        ]
+        if not cordoned:
+            return False
+        ok = True
+        for node in cordoned:
+            proc = subprocess.run(
+                ["kubectl", "uncordon", node],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=20,
+            )
+            if proc.returncode != 0:
+                self.logger.warning("Uncordon failed for %s: %s", node, proc.stderr)
+                ok = False
+            else:
+                self.logger.info("Uncordoned node %s for pending pod", node)
+        return ok
+
+    def _ready_worker_nodes(self) -> list[str]:
+        nodes = get_nodes_json()
+        ready: list[str] = []
+        for node in nodes:
+            name = node.get("metadata", {}).get("name", "")
+            if not name or not node_ready(node):
+                continue
+            labels = node.get("metadata", {}).get("labels") or {}
+            if labels.get("node-role.kubernetes.io/control-plane") == "":
+                continue
+            if labels.get("node-role.kubernetes.io/master") == "":
+                continue
+            ready.append(name)
+        return ready
+
+    def _node_from_running_sibling(self, namespace: str) -> str | None:
+        if not namespace:
+            return None
+        proc = subprocess.run(
+            [
+                "kubectl",
+                "get",
+                "pods",
+                "-n",
+                namespace,
+                "--field-selector=status.phase=Running",
+                "-o",
+                "jsonpath={.items[0].spec.nodeName}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        return proc.stdout.strip()
+
+    def _apply_missing_node_labels(self, issue: dict[str, Any]) -> bool:
+        """Label a candidate node when no node matches required nodeSelector."""
+        node_selector = issue.get("node_selector") or {}
+        if not node_selector or issue.get("pending_category") != "node_affinity":
+            return False
+
+        for key, value in node_selector.items():
+            matching = get_nodes_json(f"{key}={value}")
+            if any(node_ready(n) and node_schedulable(n) for n in matching):
+                return False
+
+        candidate = self._node_from_running_sibling(issue.get("namespace", ""))
+        if not candidate:
+            workers = self._ready_worker_nodes()
+            if len(workers) == 1:
+                candidate = workers[0]
+
+        if not candidate:
+            self.logger.info(
+                "No candidate node to apply selector %s for %s/%s",
+                node_selector,
+                issue.get("namespace"),
+                issue.get("name"),
+            )
+            return False
+
+        label_args: list[str] = []
+        for key, value in node_selector.items():
+            label_args.append(f"{key}={value}")
+
+        proc = subprocess.run(
+            ["kubectl", "label", "node", candidate, *label_args, "--overwrite"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+        if proc.returncode != 0:
+            self.logger.warning(
+                "Failed to label node %s with %s: %s",
+                candidate,
+                label_args,
+                proc.stderr[-300:],
+            )
+            return False
+
+        issue["labeled_node"] = candidate
+        self.logger.info(
+            "Applied node selector labels %s to node %s for pending pod %s/%s",
+            label_args,
+            candidate,
+            issue.get("namespace"),
+            issue.get("name"),
+        )
+        return True
 
     def _delete_evicted_pod(self, namespace: str, name: str) -> bool:
         proc = subprocess.run(
