@@ -185,6 +185,8 @@ class PodCheck(BaseCheck):
                     {
                         "pod": ref,
                         "action": "diagnosed_only",
+                        "pending_category": issue.get("pending_category"),
+                        "scheduling_message": issue.get("scheduling_message"),
                         "events": issue.get("events", []),
                     }
                 )
@@ -258,6 +260,7 @@ class PodCheck(BaseCheck):
             events = self._pod_events(ns, name)
             disk_pressure_pending = self._events_indicate_disk_pressure(events)
             if age_sec >= PENDING_MAX_SEC or disk_pressure_pending:
+                pending_diag = self._pending_diagnostics(pod, events)
                 issue = self._issue(
                     pod,
                     problem="Pending",
@@ -266,6 +269,7 @@ class PodCheck(BaseCheck):
                     extra={
                         "events": events,
                         "disk_pressure_pending": disk_pressure_pending,
+                        **pending_diag,
                     },
                 )
         elif phase == "Failed":
@@ -591,6 +595,84 @@ class PodCheck(BaseCheck):
     def _events_indicate_disk_pressure(events: list[str]) -> bool:
         joined = " ".join(events).lower()
         return "disk-pressure" in joined or "disk pressure" in joined
+
+    def _pending_diagnostics(
+        self, pod: dict[str, Any], events: list[str]
+    ) -> dict[str, Any]:
+        """Collect scheduling context to speed up Pending triage and GitOps PRs."""
+        spec = pod.get("spec", {}) or {}
+        status = pod.get("status", {}) or {}
+        diag: dict[str, Any] = {}
+
+        for cond in status.get("conditions") or []:
+            if cond.get("type") == "PodScheduled" and cond.get("status") != "True":
+                diag["scheduling_reason"] = cond.get("reason")
+                diag["scheduling_message"] = cond.get("message")
+                break
+
+        requests: dict[str, str] = {}
+        for container in list(spec.get("initContainers") or []) + list(
+            spec.get("containers") or []
+        ):
+            for resource, value in (
+                (container.get("resources") or {}).get("requests") or {}
+            ).items():
+                requests[str(resource)] = str(value)
+        if requests:
+            diag["resource_requests"] = requests
+
+        if spec.get("nodeSelector"):
+            diag["node_selector"] = spec["nodeSelector"]
+
+        if spec.get("affinity"):
+            diag["has_affinity"] = True
+
+        tolerations = spec.get("tolerations") or []
+        if tolerations:
+            diag["toleration_count"] = len(tolerations)
+
+        pvc_claims = [
+            pvc.get("claimName")
+            for vol in spec.get("volumes") or []
+            if (pvc := vol.get("persistentVolumeClaim"))
+            and pvc.get("claimName")
+        ]
+        if pvc_claims:
+            diag["pvc_claims"] = pvc_claims
+
+        diag["pending_category"] = self._classify_pending(diag, events)
+        return diag
+
+    @staticmethod
+    def _classify_pending(diag: dict[str, Any], events: list[str]) -> str:
+        joined = " ".join(events).lower()
+        msg = str(diag.get("scheduling_message") or "").lower()
+        reason = str(diag.get("scheduling_reason") or "").lower()
+        combined = f"{joined} {msg} {reason}"
+
+        if "disk-pressure" in combined or "disk pressure" in combined:
+            return "disk_pressure"
+        if "didn't match pod's node affinity" in combined or "node affinity" in combined:
+            return "node_affinity"
+        if "didn't tolerate" in combined or "untolerated taint" in combined:
+            return "taints"
+        if "insufficient cpu" in combined:
+            return "insufficient_cpu"
+        if "insufficient memory" in combined or "insufficient hugepages" in combined:
+            return "insufficient_memory"
+        if "insufficient" in combined:
+            return "insufficient_resources"
+        if (
+            "persistentvolumeclaim" in combined
+            or "unbound immediate" in combined
+            or diag.get("pvc_claims")
+        ):
+            return "pvc_unbound"
+        if "quota" in combined or "exceeded quota" in combined:
+            return "resource_quota"
+        if "schedulingdisabled" in combined or "cordoned" in combined:
+            return "node_cordoned"
+        return "unknown"
 
     def _delete_evicted_pod(self, namespace: str, name: str) -> bool:
         proc = subprocess.run(
