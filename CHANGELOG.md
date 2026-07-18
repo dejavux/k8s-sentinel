@@ -4,6 +4,14 @@ All notable changes to this project are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.14] - 2026-07-18
+
+### Fixed
+
+- `pods` auto-fix now deletes **bare Pods** stuck NotReady after a workload
+  container Completes while a sidecar (e.g. `gluetun`) keeps Running
+- Avoids recurring SentinelModuleError / open-PR spam for polymarket smoke leftovers
+
 ## [0.2.13] - 2026-06-28
 
 ### Fixed
