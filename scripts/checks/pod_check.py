@@ -194,9 +194,16 @@ class PodCheck(BaseCheck):
 
             if problem == "NotReady":
                 if issue.get("auto_fixable"):
+                    # Bare Pod + leftover sidecar: delete (no controller to recreate).
+                    # DaemonSet NotReady: delete so kubelet recreates.
                     if self._restart_pod(ns, name):
                         fixed.append(ref)
-                        actions.append({"pod": ref, "action": "restarted"})
+                        action = (
+                            "deleted_stale_bare_sidecar"
+                            if issue.get("stale_bare_sidecar")
+                            else "restarted"
+                        )
+                        actions.append({"pod": ref, "action": action})
                     else:
                         failed.append(ref)
                 else:
@@ -313,16 +320,21 @@ class PodCheck(BaseCheck):
                 age_sec = self._unready_age_seconds(pod, now)
                 if age_sec >= NOT_READY_MAX_SEC:
                     owner_kind, _owner_name = self._owner(meta)
-                    auto_fixable = owner_kind in NOTREADY_AUTO_FIX_OWNER_KINDS
+                    stale_sidecar = self._is_stale_bare_sidecar_pod(pod)
+                    auto_fixable = (
+                        owner_kind in NOTREADY_AUTO_FIX_OWNER_KINDS or stale_sidecar
+                    )
                     issue = self._issue(
                         pod,
                         problem="NotReady",
                         age_sec=age_sec,
+                        # Bare smoke pods are cluster cleanup, not GitOps.
                         needs_gitops=not auto_fixable,
                         auto_fixable=auto_fixable,
                         extra={
                             "logs": self._pod_logs(ns, name),
                             "events": self._pod_events(ns, name),
+                            "stale_bare_sidecar": stale_sidecar,
                         },
                     )
 
@@ -344,6 +356,44 @@ class PodCheck(BaseCheck):
             or owner_name.startswith("sentinel-manual-")
             or owner_name.startswith("sentinel-check-")
         )
+
+    @staticmethod
+    def _is_stale_bare_sidecar_pod(pod: dict[str, Any]) -> bool:
+        """Bare Pod where workload finished but a sidecar (e.g. gluetun) still runs.
+
+        Common anti-pattern: smoke/verify Completes, gluetun stays Running →
+        Ready=False forever → Sentinel pods noise and SentinelModuleError.
+        """
+        meta = pod.get("metadata", {}) or {}
+        owner_kind, _ = PodCheck._owner(meta)
+        if owner_kind is not None:
+            return False
+
+        statuses = list(pod.get("status", {}).get("containerStatuses") or [])
+        if len(statuses) < 2:
+            return False
+
+        names = {
+            c.get("name")
+            for c in (pod.get("spec", {}) or {}).get("containers") or []
+            if c.get("name")
+        }
+        has_known_sidecar = bool(names & {"gluetun", "cloudsql-proxy", "istio-proxy"})
+
+        completed_ok = False
+        still_running = False
+        for cs in statuses:
+            state = cs.get("state") or {}
+            terminated = state.get("terminated") or {}
+            if terminated and int(terminated.get("exitCode", 1)) == 0:
+                completed_ok = True
+            if state.get("running"):
+                still_running = True
+
+        if completed_ok and still_running:
+            return True
+        # Gluetun health flap: both containers may still be Running but Ready=False
+        return has_known_sidecar and still_running
 
     def _issue(
         self,
