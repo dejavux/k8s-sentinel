@@ -70,7 +70,11 @@ class CronJobsCheckTests(unittest.TestCase):
 
     def test_recent_failed_job_warning(self) -> None:
         recent = datetime.now(timezone.utc) - timedelta(hours=2)
-        jobs_payload = {"items": [_job_item("grid-bot-shared-services", "demo-cleanup-123", failed_at=recent)]}
+        jobs_payload = {
+            "items": [
+                _job_item("grid-bot-shared-services", "demo-cleanup-123", failed_at=recent)
+            ]
+        }
         check = CronJobsCheck()
         with patch("checks.cronjobs_check._kubectl_json", return_value=jobs_payload):
             with patch(
