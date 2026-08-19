@@ -46,7 +46,7 @@ spec:
                   name: k8s-sentinel-secrets
                   key: cursor-api-key
             - name: CURSOR_AGENT_MODEL
-              value: default
+              value: composer-2.5
           resources:
             requests:
               cpu: 100m
