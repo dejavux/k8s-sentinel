@@ -43,14 +43,14 @@ function ensureCursorEnvLoaded(): void {
   }
 }
 
-/** Map .env "default" / "auto" to Cursor SDK Auto mode id. */
+/** Normalize historical aliases onto the lower-cost Composer default. */
 export function normalizeCursorModelId(raw: string | undefined): string {
   const trimmed = raw?.trim();
   if (!trimmed) {
     return DEFAULT_CURSOR_MODEL;
   }
   if (trimmed.toLowerCase() === "default" || trimmed.toLowerCase() === "auto") {
-    return "default";
+    return DEFAULT_CURSOR_MODEL;
   }
   return trimmed;
 }
