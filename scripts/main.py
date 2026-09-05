@@ -26,10 +26,11 @@ from checks.resources_check import ResourcesCheck
 from checks.runc_check import RuncCheck
 from gitops.eligibility import should_create_fix_pr
 from gitops.pr_creator import create_fix_pr
+from gitops.queue_dispatch import enqueue_gitops_job, gitops_dispatch_mode
 from gitops.repo_bootstrap import ensure_clone
-from notify.telegram import maybe_send_telegram_summary
 from metrics.prometheus import render_prometheus_metrics
 from metrics.pushgateway import push_prometheus_metrics
+from notify.telegram import maybe_send_telegram_summary
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,9 +95,7 @@ def run_checks(modules: Optional[List[str]] = None) -> Dict[str, Any]:
     return results
 
 
-def run_fixes(
-    check_results: Dict[str, Any], modules: Optional[List[str]] = None
-) -> Dict[str, Any]:
+def run_fixes(check_results: Dict[str, Any], modules: Optional[List[str]] = None) -> Dict[str, Any]:
     """執行修復"""
     modules = normalize_modules(modules)
     if "all" in modules:
@@ -140,18 +139,31 @@ def maybe_create_fix_pr(
         logger.info("Skipping auto PR (no GitOps-worthy issues)")
         return None
 
-    try:
-        ensure_clone()
-    except (subprocess.CalledProcessError, OSError, RuntimeError) as exc:
-        logger.exception("Repo bootstrap failed: %s", exc)
-        return {"success": False, "message": str(exc)}
-
     payload = {
         "timestamp": datetime.utcnow().isoformat(),
         "checks": {k: v.to_dict() for k, v in check_results.items()},
         "fixes": {k: v.to_dict() for k, v in fix_results.items()},
     }
     auto_merge = os.getenv("SENTINEL_AUTO_MERGE", "false").lower() == "true"
+
+    if gitops_dispatch_mode() == "queue":
+        try:
+            result = enqueue_gitops_job(payload)
+        except (subprocess.CalledProcessError, OSError) as exc:
+            logger.exception("GitOps queue dispatch failed: %s", exc)
+            return {"success": False, "message": str(exc)}
+        if result.get("success"):
+            logger.info("GitOps job queued: %s", result.get("remote_path"))
+        else:
+            logger.warning("GitOps queue failed: %s", result.get("message"))
+        return result
+
+    try:
+        ensure_clone()
+    except (subprocess.CalledProcessError, OSError, RuntimeError) as exc:
+        logger.exception("Repo bootstrap failed: %s", exc)
+        return {"success": False, "message": str(exc)}
+
     try:
         result = create_fix_pr(payload, auto_merge=auto_merge)
     except (subprocess.CalledProcessError, OSError, json.JSONDecodeError) as exc:
@@ -212,13 +224,9 @@ def save_results(
 
 def main() -> int:
     """主程序"""
-    parser = argparse.ArgumentParser(
-        description="K8s Sentinel - 自動化叢集健康檢查與修復"
-    )
+    parser = argparse.ArgumentParser(description="K8s Sentinel - 自動化叢集健康檢查與修復")
     parser.add_argument("command", choices=["check", "fix", "list"], help="執行命令")
-    parser.add_argument(
-        "--modules", nargs="+", default=["all"], help="要執行的模組（預設: all）"
-    )
+    parser.add_argument("--modules", nargs="+", default=["all"], help="要執行的模組（預設: all）")
     parser.add_argument("--auto-fix", action="store_true", help="檢查後自動修復")
 
     args = parser.parse_args()
@@ -255,14 +263,10 @@ def main() -> int:
                 check_results = run_checks(args.modules)
 
         save_results(check_results, fix_results)
-        maybe_send_telegram_summary(
-            check_results, fix_results, pr_result=pr_result
-        )
+        maybe_send_telegram_summary(check_results, fix_results, pr_result=pr_result)
         has_errors = any(r.status == "error" for r in check_results.values())
         disk = check_results.get("disk")
-        fail_on_disk_warn = (
-            os.getenv("SENTINEL_DISK_WARN_FAIL", "true").lower() == "true"
-        )
+        fail_on_disk_warn = os.getenv("SENTINEL_DISK_WARN_FAIL", "true").lower() == "true"
         has_disk_warn = disk is not None and disk.status == "warning"
         return 1 if has_errors or (fail_on_disk_warn and has_disk_warn) else 0
 
@@ -273,9 +277,7 @@ def main() -> int:
         if fix_results:
             pr_result = maybe_create_fix_pr(check_results, fix_results)
         save_results(check_results, fix_results)
-        maybe_send_telegram_summary(
-            check_results, fix_results, pr_result=pr_result
-        )
+        maybe_send_telegram_summary(check_results, fix_results, pr_result=pr_result)
 
         has_failures = any(not r.success for r in fix_results.values())
         return 1 if has_failures else 0

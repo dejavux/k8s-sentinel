@@ -1,9 +1,11 @@
-"""When Sentinel should open a GitOps PR (Cursor cloud agent)."""
+"""When Sentinel should open a GitOps PR (Cursor local worker on delta)."""
 
 from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING
+
+from gitops.issue_classifier import aggregate_issues_gitops
 
 if TYPE_CHECKING:
     from checks.base import CheckResult, FixResult
@@ -27,12 +29,22 @@ def module_needs_gitops(
     if check is None:
         return False
     details = check.details or {}
+
+    issues = details.get("issues")
+    if isinstance(issues, list) and issues:
+        if aggregate_issues_gitops(issues):
+            return True
+
     if details.get("needs_gitops"):
         return True
     if fix_results:
         fix = fix_results.get(module)
-        if fix and fix.details and fix.details.get("needs_gitops"):
-            return True
+        if fix and fix.details:
+            remaining = fix.details.get("remaining_issues")
+            if isinstance(remaining, list) and aggregate_issues_gitops(remaining):
+                return True
+            if fix.details.get("needs_gitops"):
+                return True
     return False
 
 
