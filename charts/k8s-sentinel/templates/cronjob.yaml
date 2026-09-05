@@ -145,6 +145,24 @@ spec:
                   value: {{ .Values.gitops.gitCommitterEmail | quote }}
                 - name: NODE_OPTIONS
                   value: {{ .Values.gitops.nodeOptions | quote }}
+                - name: SENTINEL_GITOPS_DISPATCH
+                  value: {{ .Values.gitops.dispatch | quote }}
+                {{- if .Values.gitops.queueHost }}
+                - name: SENTINEL_GITOPS_QUEUE_HOST
+                  value: {{ .Values.gitops.queueHost | quote }}
+                {{- end }}
+                {{- if .Values.gitops.queueDir }}
+                - name: SENTINEL_GITOPS_QUEUE_DIR
+                  value: {{ .Values.gitops.queueDir | quote }}
+                {{- end }}
+                {{- if .Values.gitops.queueUser }}
+                - name: SENTINEL_GITOPS_QUEUE_USER
+                  value: {{ .Values.gitops.queueUser | quote }}
+                {{- end }}
+                {{- if .Values.gitops.queueSshKey }}
+                - name: SENTINEL_GITOPS_SSH_KEY
+                  value: {{ .Values.gitops.queueSshKey | quote }}
+                {{- end }}
                 {{- end }}
                 {{- if .Values.ansible.enabled }}
                 - name: ANSIBLE_INVENTORY
