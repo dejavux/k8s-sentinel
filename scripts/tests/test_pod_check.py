@@ -70,6 +70,15 @@ class PodCheckPendingDiagnosticsTests(unittest.TestCase):
         category = PodCheck._classify_pending({}, events)
         self.assertEqual(category, "disk_pressure")
 
+    def test_classify_image_pull_before_pvc_unbound(self) -> None:
+        diag = {"pvc_claims": ["content-studio-work"]}
+        events = [
+            "BackOff: Back-off pulling image \"registry-internal.3q.fi/rayna-voice-sync:v0.2.1\"",
+            "Failed: Error: ImagePullBackOff",
+        ]
+        category = PodCheck._classify_pending(diag, events)
+        self.assertEqual(category, "image_pull")
+
     def test_pending_diagnostics_collects_spec_and_status(self) -> None:
         pod = _pending_pod(
             scheduling_message="0/2 nodes didn't match pod's node affinity/selector.",

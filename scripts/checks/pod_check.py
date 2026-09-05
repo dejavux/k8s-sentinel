@@ -739,6 +739,16 @@ class PodCheck(BaseCheck):
             return "insufficient_memory"
         if "insufficient" in combined:
             return "insufficient_resources"
+        if any(
+            marker in combined
+            for marker in (
+                "imagepullbackoff",
+                "errimagepull",
+                "back-off pulling image",
+                "failed to pull image",
+            )
+        ):
+            return "image_pull"
         if (
             "persistentvolumeclaim" in combined
             or "unbound immediate" in combined

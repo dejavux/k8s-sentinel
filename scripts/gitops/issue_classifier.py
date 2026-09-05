@@ -77,6 +77,7 @@ def classify_issue_gitops(issue: dict[str, Any]) -> bool:
             "insufficient_resources",
             "taints",
             "node_cordoned",
+            "image_pull",
         }:
             return False
         if _runtime_only_message(issue):

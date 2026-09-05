@@ -7,7 +7,7 @@
   become: true
   vars:
     registry_endpoint: "{{ registry_endpoint | default('') }}"
-    registry_svc_host: "{{ registry_svc_host | default('') }}"
+    registry_svc_host: "{{ registry_svc_host | default('registry.docker-registry-internal.svc.cluster.local:5000') }}"
   tasks:
     - name: Remove legacy mirrors block (conflicts with config_path)
       ansible.builtin.blockinfile:
@@ -15,6 +15,29 @@
         marker: "# {mark} ANSIBLE MANAGED - INCLUSTER REGISTRY MIRROR"
         state: absent
       failed_when: false
+
+    - name: Ensure containerd certs.d base directory exists
+      ansible.builtin.file:
+        path: /etc/containerd/certs.d
+        state: directory
+        mode: "0755"
+
+    - name: Build registry host list for certs.d
+      ansible.builtin.set_fact:
+        registry_hosts: >-
+          {{
+            ([registry_endpoint] if registry_endpoint | length > 0 else [])
+            + ([registry_svc_host] if registry_svc_host | length > 0 else [])
+            | unique
+          }}
+
+    - name: Ensure certs.d registry directories exist
+      ansible.builtin.file:
+        path: "/etc/containerd/certs.d/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ registry_hosts }}"
+      when: registry_hosts | length > 0
 
     - name: Install certs.d hosts.toml for registry ClusterIP
       ansible.builtin.copy:
@@ -25,6 +48,7 @@
 
           [host."http://{{ registry_endpoint }}"]
             capabilities = ["pull", "resolve", "push"]
+      when: registry_endpoint | length > 0
 
     - name: Install certs.d hosts.toml for in-cluster registry Service DNS
       ansible.builtin.copy:
@@ -35,6 +59,7 @@
 
           [host."http://{{ registry_svc_host }}"]
             capabilities = ["pull", "resolve", "push"]
+      when: registry_svc_host | length > 0
 
     - name: Restart containerd
       ansible.builtin.systemd:
