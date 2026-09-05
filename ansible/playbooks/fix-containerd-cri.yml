@@ -5,6 +5,7 @@
 - name: Fix containerd CRI registry config
   hosts: "{{ target_hosts | default('k8s_cluster') }}"
   become: true
+  gather_facts: false
   vars:
     registry_endpoint: "{{ registry_endpoint | default('') }}"
     registry_svc_host: "{{ registry_svc_host | default('') }}"
@@ -16,6 +17,16 @@
         state: absent
       failed_when: false
 
+    - name: Ensure certs.d registry directories exist
+      ansible.builtin.file:
+        path: "/etc/containerd/certs.d/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ registry_endpoint }}"
+        - "{{ registry_svc_host }}"
+      when: item | length > 0
+
     - name: Install certs.d hosts.toml for registry ClusterIP
       ansible.builtin.copy:
         dest: "/etc/containerd/certs.d/{{ registry_endpoint }}/hosts.toml"
@@ -25,6 +36,7 @@
 
           [host."http://{{ registry_endpoint }}"]
             capabilities = ["pull", "resolve", "push"]
+      when: registry_endpoint | length > 0
 
     - name: Install certs.d hosts.toml for in-cluster registry Service DNS
       ansible.builtin.copy:
@@ -35,15 +47,18 @@
 
           [host."http://{{ registry_svc_host }}"]
             capabilities = ["pull", "resolve", "push"]
+      when: registry_svc_host | length > 0
 
     - name: Restart containerd
       ansible.builtin.systemd:
         name: containerd
         state: restarted
+        daemon_reload: true
 
     - name: Wait for containerd socket
-      ansible.builtin.pause:
-        seconds: 3
+      ansible.builtin.wait_for:
+        path: /run/containerd/containerd.sock
+        timeout: 30
 
     - name: Verify CRI endpoint
       ansible.builtin.command: crictl info
@@ -55,3 +70,5 @@
       ansible.builtin.systemd:
         name: kubelet
         state: restarted
+        enabled: true
+        daemon_reload: true
