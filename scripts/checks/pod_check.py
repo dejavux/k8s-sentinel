@@ -16,6 +16,8 @@ from pathlib import Path
 from json import JSONDecodeError
 from typing import Any
 
+from gitops.issue_classifier import aggregate_issues_gitops, classify_issue_gitops
+
 from .base import BaseCheck, CheckResult, FixResult
 
 PROBLEM_REASONS = frozenset(
@@ -88,12 +90,11 @@ class PodCheck(BaseCheck):
                 problem = item.get("problem", "unknown")
                 counts[problem] = counts.get(problem, 0) + 1
 
-            needs_gitops = any(item.get("needs_gitops") for item in issues)
+            needs_gitops = aggregate_issues_gitops(issues)
             status = (
                 "error"
                 if any(
-                    item.get("problem") in PROBLEM_REASONS
-                    or item.get("problem") == "NotReady"
+                    item.get("problem") in PROBLEM_REASONS or item.get("problem") == "NotReady"
                     for item in issues
                 )
                 else "warning"
@@ -168,9 +169,7 @@ class PodCheck(BaseCheck):
                 patched = self._patch_configmap_key(issue["configmap_mismatch"])
                 if patched:
                     fixed.append(ref)
-                    actions.append(
-                        {"pod": ref, "action": "configmap_patched", **patched}
-                    )
+                    actions.append({"pod": ref, "action": "configmap_patched", **patched})
                     continue
 
             if problem in PROBLEM_REASONS and issue.get("owner_kind") == "ReplicaSet":
@@ -243,7 +242,7 @@ class PodCheck(BaseCheck):
                 continue
 
         remaining = [i for i in issues if f"{i['namespace']}/{i['name']}" not in fixed]
-        needs_gitops = any(i.get("needs_gitops") for i in remaining)
+        needs_gitops = aggregate_issues_gitops(remaining)
 
         return FixResult(
             module=self.name,
@@ -304,13 +303,14 @@ class PodCheck(BaseCheck):
                     pod,
                     problem="Pending",
                     age_sec=age_sec,
-                    needs_gitops=True,
+                    needs_gitops=False,
                     extra={
                         "events": events,
                         "disk_pressure_pending": disk_pressure_pending,
                         **pending_diag,
                     },
                 )
+                issue["needs_gitops"] = classify_issue_gitops(issue)
         elif phase == "Failed":
             reason = status.get("reason") or ""
             message = status.get("message") or ""
@@ -320,7 +320,7 @@ class PodCheck(BaseCheck):
                     pod,
                     problem="Evicted",
                     age_sec=self._age_seconds(meta.get("creationTimestamp"), now),
-                    needs_gitops=disk_related,
+                    needs_gitops=False,
                     auto_fixable=True,
                     extra={
                         "node": pod.get("spec", {}).get("nodeName"),
@@ -337,7 +337,7 @@ class PodCheck(BaseCheck):
                     pod,
                     problem=container_problem,
                     age_sec=self._age_seconds(meta.get("creationTimestamp"), now),
-                    needs_gitops=True,
+                    needs_gitops=False,
                     extra={
                         "logs": self._pod_logs(ns, name),
                         "events": self._pod_events(ns, name),
@@ -351,22 +351,19 @@ class PodCheck(BaseCheck):
                 cm_hint = self._configmap_mismatch(pod, logs)
                 if cm_hint:
                     issue["configmap_mismatch"] = cm_hint
-                    issue["needs_gitops"] = True
                     issue["auto_fixable"] = True
+                issue["needs_gitops"] = classify_issue_gitops(issue)
             elif phase == "Running" and not self._pod_ready(pod):
                 age_sec = self._unready_age_seconds(pod, now)
                 if age_sec >= NOT_READY_MAX_SEC:
                     owner_kind, _owner_name = self._owner(meta)
                     stale_sidecar = self._is_stale_bare_sidecar_pod(pod)
-                    auto_fixable = (
-                        owner_kind in NOTREADY_AUTO_FIX_OWNER_KINDS or stale_sidecar
-                    )
+                    auto_fixable = owner_kind in NOTREADY_AUTO_FIX_OWNER_KINDS or stale_sidecar
                     issue = self._issue(
                         pod,
                         problem="NotReady",
                         age_sec=age_sec,
-                        # Bare smoke pods are cluster cleanup, not GitOps.
-                        needs_gitops=not auto_fixable,
+                        needs_gitops=False,
                         auto_fixable=auto_fixable,
                         extra={
                             "logs": self._pod_logs(ns, name),
@@ -374,6 +371,7 @@ class PodCheck(BaseCheck):
                             "stale_bare_sidecar": stale_sidecar,
                         },
                     )
+                    issue["needs_gitops"] = classify_issue_gitops(issue)
 
         return issue
 
@@ -485,8 +483,7 @@ class PodCheck(BaseCheck):
     @staticmethod
     def _pod_ready(pod: dict[str, Any]) -> bool:
         conditions = {
-            c.get("type"): c.get("status")
-            for c in pod.get("status", {}).get("conditions") or []
+            c.get("type"): c.get("status") for c in pod.get("status", {}).get("conditions") or []
         }
         return conditions.get("Ready") == "True"
 
@@ -500,10 +497,7 @@ class PodCheck(BaseCheck):
             if reason in PROBLEM_REASONS:
                 return reason
             terminated = state.get("terminated") or {}
-            if (
-                terminated.get("reason") == "Error"
-                and terminated.get("exitCode", 0) != 0
-            ):
+            if terminated.get("reason") == "Error" and terminated.get("exitCode", 0) != 0:
                 return "Error"
         return None
 
@@ -552,9 +546,7 @@ class PodCheck(BaseCheck):
             )
         return lines
 
-    def _configmap_mismatch(
-        self, pod: dict[str, Any], logs: str
-    ) -> dict[str, Any] | None:
+    def _configmap_mismatch(self, pod: dict[str, Any], logs: str) -> dict[str, Any] | None:
         if "does not exist" not in logs and "no such file" not in logs.lower():
             return None
 
@@ -617,9 +609,7 @@ class PodCheck(BaseCheck):
         for key in keys:
             if key == expected:
                 return key
-            if key.rsplit(".", 1)[0] == base and (
-                key.endswith(".yaml") or key.endswith(".yml")
-            ):
+            if key.rsplit(".", 1)[0] == base and (key.endswith(".yaml") or key.endswith(".yml")):
                 return key
         for key in keys:
             if key.endswith(".yaml") or key.endswith(".yml"):
@@ -656,9 +646,7 @@ class PodCheck(BaseCheck):
             timeout=30,
         )
         if proc.returncode != 0:
-            self.logger.warning(
-                "ConfigMap patch failed for %s/%s: %s", ns, name, proc.stderr
-            )
+            self.logger.warning("ConfigMap patch failed for %s/%s: %s", ns, name, proc.stderr)
             return None
         self.logger.info(
             "Patched ConfigMap %s/%s: added key %s from %s",
@@ -688,9 +676,7 @@ class PodCheck(BaseCheck):
         joined = " ".join(events).lower()
         return "disk-pressure" in joined or "disk pressure" in joined
 
-    def _pending_diagnostics(
-        self, pod: dict[str, Any], events: list[str]
-    ) -> dict[str, Any]:
+    def _pending_diagnostics(self, pod: dict[str, Any], events: list[str]) -> dict[str, Any]:
         """Collect scheduling context to speed up Pending triage and GitOps PRs."""
         spec = pod.get("spec", {}) or {}
         status = pod.get("status", {}) or {}
@@ -726,8 +712,7 @@ class PodCheck(BaseCheck):
         pvc_claims = [
             pvc.get("claimName")
             for vol in spec.get("volumes") or []
-            if (pvc := vol.get("persistentVolumeClaim"))
-            and pvc.get("claimName")
+            if (pvc := vol.get("persistentVolumeClaim")) and pvc.get("claimName")
         ]
         if pvc_claims:
             diag["pvc_claims"] = pvc_claims
@@ -932,18 +917,13 @@ class PodCheck(BaseCheck):
                         break
             if target_owner:
                 for ref in meta.get("ownerReferences") or []:
-                    if (
-                        ref.get("kind") == "Deployment"
-                        and ref.get("name") == target_owner
-                    ):
+                    if ref.get("kind") == "Deployment" and ref.get("name") == target_owner:
                         created = meta.get("creationTimestamp")
                         if created:
                             same_deploy.append(
                                 (
                                     meta.get("name", ""),
-                                    datetime.fromisoformat(
-                                        created.replace("Z", "+00:00")
-                                    ),
+                                    datetime.fromisoformat(created.replace("Z", "+00:00")),
                                 )
                             )
 

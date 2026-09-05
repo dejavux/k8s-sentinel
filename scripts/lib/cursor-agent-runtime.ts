@@ -14,7 +14,10 @@ export function resolveCursorAgentRuntime(): CursorAgentRuntime {
     return explicit;
   }
   if (process.env.KUBERNETES_SERVICE_HOST) {
-    return "cloud";
+    const dispatch = process.env.SENTINEL_GITOPS_DISPATCH?.trim().toLowerCase();
+    if (dispatch !== "queue") {
+      return "cloud";
+    }
   }
   return "local";
 }
