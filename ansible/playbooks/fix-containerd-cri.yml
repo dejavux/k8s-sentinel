@@ -1,6 +1,9 @@
 ---
 # Fix containerd CRI when config_path + registry.mirrors conflict breaks the CRI plugin.
 # Portable: ships with k8s-sentinel (public repo); limit with --extra-vars target_hosts=cp1,worker1
+#
+# Sentinel 2026-09-05: worker3 runtime=containerd://Unknown; copy failed because
+# /etc/containerd/certs.d/<endpoint> did not exist (missing mkdir before hosts.toml).
 
 - name: Fix containerd CRI registry config
   hosts: "{{ target_hosts | default('k8s_cluster') }}"
@@ -8,13 +11,49 @@
   vars:
     registry_endpoint: "{{ registry_endpoint | default('') }}"
     registry_svc_host: "{{ registry_svc_host | default('') }}"
+    registry_https_host: "{{ registry_https_host | default('registry-internal.3q.fi') }}"
   tasks:
+    - name: Check containerd is active
+      ansible.builtin.command: systemctl is-active containerd
+      register: containerd_active
+      changed_when: false
+      failed_when: false
+
+    - name: Skip hosts without containerd
+      ansible.builtin.meta: end_host
+      when: containerd_active.rc != 0
+
     - name: Remove legacy mirrors block (conflicts with config_path)
       ansible.builtin.blockinfile:
         path: /etc/containerd/config.toml
         marker: "# {mark} ANSIBLE MANAGED - INCLUSTER REGISTRY MIRROR"
         state: absent
       failed_when: false
+
+    - name: Build certs.d directory list
+      ansible.builtin.set_fact:
+        certs_d_hosts: >-
+          {{
+            [
+              registry_endpoint,
+              registry_svc_host,
+              registry_https_host
+            ]
+            | select('defined')
+            | select('string')
+            | map('trim')
+            | reject('equalto', '')
+            | unique
+            | list
+          }}
+
+    - name: Ensure certs.d registry directories exist
+      ansible.builtin.file:
+        path: "/etc/containerd/certs.d/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ certs_d_hosts }}"
+      when: certs_d_hosts | length > 0
 
     - name: Install certs.d hosts.toml for registry ClusterIP
       ansible.builtin.copy:
@@ -25,6 +64,7 @@
 
           [host."http://{{ registry_endpoint }}"]
             capabilities = ["pull", "resolve", "push"]
+      when: registry_endpoint | length > 0
 
     - name: Install certs.d hosts.toml for in-cluster registry Service DNS
       ansible.builtin.copy:
@@ -35,11 +75,24 @@
 
           [host."http://{{ registry_svc_host }}"]
             capabilities = ["pull", "resolve", "push"]
+      when: registry_svc_host | length > 0
+
+    - name: Install certs.d hosts.toml for kubelet HTTPS registry host
+      ansible.builtin.copy:
+        dest: "/etc/containerd/certs.d/{{ registry_https_host }}/hosts.toml"
+        mode: "0644"
+        content: |
+          server = "https://{{ registry_https_host }}"
+
+          [host."https://{{ registry_https_host }}"]
+            capabilities = ["pull", "resolve", "push"]
+      when: registry_https_host | length > 0
 
     - name: Restart containerd
       ansible.builtin.systemd:
         name: containerd
         state: restarted
+        daemon_reload: true
 
     - name: Wait for containerd socket
       ansible.builtin.pause:
@@ -55,3 +108,5 @@
       ansible.builtin.systemd:
         name: kubelet
         state: restarted
+        enabled: true
+        daemon_reload: true

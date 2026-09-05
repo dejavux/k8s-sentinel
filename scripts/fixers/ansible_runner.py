@@ -208,6 +208,9 @@ class AnsibleRunner:
                 "target_hosts": ",".join(limit) if limit else "k8s_cluster",
                 "registry_endpoint": os.getenv("SENTINEL_REGISTRY_ENDPOINT", ""),
                 "registry_svc_host": os.getenv("SENTINEL_REGISTRY_SVC_HOST", ""),
+                "registry_https_host": os.getenv(
+                    "SENTINEL_REGISTRY_HTTPS_HOST", "registry-internal.3q.fi"
+                ),
             },
         )
 

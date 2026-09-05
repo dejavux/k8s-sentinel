@@ -104,6 +104,10 @@ spec:
                 - name: SENTINEL_REGISTRY_SVC_HOST
                   value: {{ .Values.registry.svcHost | quote }}
                 {{- end }}
+                {{- if .Values.registry.httpsHost }}
+                - name: SENTINEL_REGISTRY_HTTPS_HOST
+                  value: {{ .Values.registry.httpsHost | quote }}
+                {{- end }}
                 {{- if or .Values.secrets.create .Values.secrets.existingSecret .Values.onepassword.enabled }}
                 - name: CURSOR_API_KEY
                   valueFrom:

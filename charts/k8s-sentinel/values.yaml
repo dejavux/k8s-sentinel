@@ -79,6 +79,7 @@ gitops:
 registry:
   endpoint: ""
   svcHost: ""
+  httpsHost: "registry-internal.3q.fi"
 
 resources:
   requests:
