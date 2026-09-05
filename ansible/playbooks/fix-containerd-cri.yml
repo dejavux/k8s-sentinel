@@ -1,6 +1,9 @@
 ---
 # Fix containerd CRI when config_path + registry.mirrors conflict breaks the CRI plugin.
 # Portable: ships with k8s-sentinel (public repo); limit with --extra-vars target_hosts=cp1,worker1
+#
+# Sentinel 2026-09-05: worker3 failed — certs.d parent dir missing before copy;
+# worker9 failed — containerd restart exited non-zero (validate config before restart).
 
 - name: Fix containerd CRI registry config
   hosts: "{{ target_hosts | default('k8s_cluster') }}"
@@ -9,12 +12,34 @@
     registry_endpoint: "{{ registry_endpoint | default('') }}"
     registry_svc_host: "{{ registry_svc_host | default('') }}"
   tasks:
+    - name: Check containerd is active
+      ansible.builtin.command: systemctl is-active containerd
+      register: containerd_active
+      changed_when: false
+      failed_when: false
+
+    - name: Skip hosts without containerd
+      ansible.builtin.meta: end_host
+      when: containerd_active.rc != 0
+
     - name: Remove legacy mirrors block (conflicts with config_path)
       ansible.builtin.blockinfile:
         path: /etc/containerd/config.toml
         marker: "# {mark} ANSIBLE MANAGED - INCLUSTER REGISTRY MIRROR"
         state: absent
       failed_when: false
+
+    - name: Build registry endpoint list
+      ansible.builtin.set_fact:
+        registry_hosts: "{{ ([registry_endpoint, registry_svc_host] | select('ne', '') | list | unique) }}"
+
+    - name: Ensure certs.d registry directories exist
+      ansible.builtin.file:
+        path: "/etc/containerd/certs.d/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ registry_hosts }}"
+      when: registry_hosts | length > 0
 
     - name: Install certs.d hosts.toml for registry ClusterIP
       ansible.builtin.copy:
@@ -25,6 +50,8 @@
 
           [host."http://{{ registry_endpoint }}"]
             capabilities = ["pull", "resolve", "push"]
+      when: registry_endpoint | length > 0
+      notify: Restart containerd and kubelet
 
     - name: Install certs.d hosts.toml for in-cluster registry Service DNS
       ansible.builtin.copy:
@@ -35,11 +62,24 @@
 
           [host."http://{{ registry_svc_host }}"]
             capabilities = ["pull", "resolve", "push"]
+      when: registry_svc_host | length > 0
+      notify: Restart containerd and kubelet
 
-    - name: Restart containerd
+  handlers:
+    - name: Validate containerd config before restart
+      ansible.builtin.command: containerd config dump
+      register: containerd_config_dump
+      changed_when: false
+      failed_when: containerd_config_dump.rc != 0
+
+    - name: Restart containerd and kubelet
       ansible.builtin.systemd:
-        name: containerd
+        name: "{{ item }}"
         state: restarted
+        daemon_reload: true
+      loop:
+        - containerd
+        - kubelet
 
     - name: Wait for containerd socket
       ansible.builtin.pause:
@@ -50,8 +90,3 @@
       register: cri_info
       changed_when: false
       failed_when: cri_info.rc != 0
-
-    - name: Restart kubelet
-      ansible.builtin.systemd:
-        name: kubelet
-        state: restarted
