@@ -7,14 +7,35 @@
   become: true
   vars:
     registry_endpoint: "{{ registry_endpoint | default('') }}"
-    registry_svc_host: "{{ registry_svc_host | default('') }}"
+    registry_svc_host: >-
+      {{ registry_svc_host | default('registry.docker-registry-internal.svc.cluster.local:5000') }}
   tasks:
+    - name: Check containerd is active
+      ansible.builtin.command: systemctl is-active containerd
+      register: containerd_active
+      changed_when: false
+      failed_when: false
+
+    - name: Skip hosts without containerd
+      ansible.builtin.meta: end_host
+      when: containerd_active.rc != 0
+
     - name: Remove legacy mirrors block (conflicts with config_path)
       ansible.builtin.blockinfile:
         path: /etc/containerd/config.toml
         marker: "# {mark} ANSIBLE MANAGED - INCLUSTER REGISTRY MIRROR"
         state: absent
       failed_when: false
+
+    - name: Ensure certs.d registry directories exist
+      ansible.builtin.file:
+        path: "/etc/containerd/certs.d/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ registry_endpoint }}"
+        - "{{ registry_svc_host }}"
+      when: item | length > 0
 
     - name: Install certs.d hosts.toml for registry ClusterIP
       ansible.builtin.copy:
@@ -25,6 +46,8 @@
 
           [host."http://{{ registry_endpoint }}"]
             capabilities = ["pull", "resolve", "push"]
+      when: registry_endpoint | length > 0
+      notify: Restart containerd and kubelet
 
     - name: Install certs.d hosts.toml for in-cluster registry Service DNS
       ansible.builtin.copy:
@@ -35,23 +58,50 @@
 
           [host."http://{{ registry_svc_host }}"]
             capabilities = ["pull", "resolve", "push"]
+      when: registry_svc_host | length > 0
+      notify: Restart containerd and kubelet
 
-    - name: Restart containerd
+    - name: Restart containerd when only mirrors block was removed
       ansible.builtin.systemd:
         name: containerd
         state: restarted
+      when: registry_endpoint | length == 0 and registry_svc_host | length == 0
+
+    - name: Wait for containerd socket after mirrors-only restart
+      ansible.builtin.pause:
+        seconds: 3
+      when: registry_endpoint | length == 0 and registry_svc_host | length == 0
+
+    - name: Verify CRI endpoint after mirrors-only restart
+      ansible.builtin.command: crictl info
+      register: cri_info_mirrors_only
+      changed_when: false
+      failed_when: cri_info_mirrors_only.rc != 0
+      when: registry_endpoint | length == 0 and registry_svc_host | length == 0
+
+    - name: Restart kubelet after mirrors-only restart
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+      when: registry_endpoint | length == 0 and registry_svc_host | length == 0
+
+  handlers:
+    - name: Restart containerd and kubelet
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop:
+        - containerd
+        - kubelet
 
     - name: Wait for containerd socket
       ansible.builtin.pause:
         seconds: 3
+      listen: Restart containerd and kubelet
 
     - name: Verify CRI endpoint
       ansible.builtin.command: crictl info
       register: cri_info
       changed_when: false
       failed_when: cri_info.rc != 0
-
-    - name: Restart kubelet
-      ansible.builtin.systemd:
-        name: kubelet
-        state: restarted
+      listen: Restart containerd and kubelet
