@@ -15,6 +15,16 @@ class IssueClassifierTests(unittest.TestCase):
         }
         self.assertFalse(classify_issue_gitops(issue))
 
+    def test_cni0_mismatch_category_not_gitops(self) -> None:
+        issue = {
+            "problem": "Pending",
+            "pending_category": "cni0_mismatch",
+            "events": [
+                'FailedCreatePodSandBox: plugin type="flannel" failed (add): cni0'
+            ],
+        }
+        self.assertFalse(classify_issue_gitops(issue))
+
     def test_cni0_flannel_pending_not_gitops(self) -> None:
         issue = {
             "problem": "Pending",

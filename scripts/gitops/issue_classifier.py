@@ -70,6 +70,8 @@ def classify_issue_gitops(issue: dict[str, Any]) -> bool:
     problem = str(issue.get("problem") or "")
     if problem == "Pending":
         category = str(issue.get("pending_category") or "unknown")
+        if category == "cni0_mismatch":
+            return False
         if category in {
             "disk_pressure",
             "insufficient_cpu",

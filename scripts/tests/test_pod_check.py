@@ -70,6 +70,29 @@ class PodCheckPendingDiagnosticsTests(unittest.TestCase):
         category = PodCheck._classify_pending({}, events)
         self.assertEqual(category, "disk_pressure")
 
+    def test_classify_cni0_mismatch(self) -> None:
+        events = [
+            'FailedCreatePodSandBox: plugin type="flannel" failed (add): '
+            'failed to set bridge addr: "cni0" already has an IP address '
+            "different from 10.244.6.1/24"
+        ]
+        category = PodCheck._classify_pending({}, events)
+        self.assertEqual(category, "cni0_mismatch")
+
+    def test_events_indicate_cni0_mismatch(self) -> None:
+        events = [
+            'FailedCreatePodSandBox: plugin type="flannel" failed (add): '
+            "failed to set bridge addr"
+        ]
+        self.assertTrue(PodCheck._events_indicate_cni0_mismatch(events))
+
+    def test_cni0_issue_node_prefers_spec_node(self) -> None:
+        issue = {
+            "node": "worker3",
+            "node_selector": {"kubernetes.io/hostname": "worker6"},
+        }
+        self.assertEqual(PodCheck._cni0_issue_node(issue), "worker3")
+
     def test_pending_diagnostics_collects_spec_and_status(self) -> None:
         pod = _pending_pod(
             scheduling_message="0/2 nodes didn't match pod's node affinity/selector.",

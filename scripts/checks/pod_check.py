@@ -47,6 +47,13 @@ PVC_DISK_FULL_MARKERS = (
     "enospc",
 )
 
+CNI0_SANDBOX_MARKERS = (
+    "failedcreatepodsandbox",
+    "cni0",
+    "failed to set bridge addr",
+    'plugin type="flannel"',
+)
+
 TERMINATING_MAX_SEC = int(os.getenv("SENTINEL_POD_TERMINATING_MAX_SEC", "3600"))
 PENDING_MAX_SEC = int(os.getenv("SENTINEL_POD_PENDING_MAX_SEC", "1800"))
 NOT_READY_MAX_SEC = int(os.getenv("SENTINEL_POD_NOT_READY_MAX_SEC", "900"))
@@ -142,6 +149,7 @@ class PodCheck(BaseCheck):
         fixed: list[str] = []
         failed: list[str] = []
         actions: list[dict[str, Any]] = []
+        cni0_fixed_nodes: set[str] = set()
 
         for issue in issues:
             ns = issue.get("namespace", "")
@@ -200,6 +208,51 @@ class PodCheck(BaseCheck):
                 continue
 
             if problem == "Pending":
+                if issue.get("pending_category") == "cni0_mismatch":
+                    node = self._cni0_issue_node(issue)
+                    if node and node not in cni0_fixed_nodes:
+                        if self._fix_cni0_mismatch(node):
+                            cni0_fixed_nodes.add(node)
+                            fixed.append(ref)
+                            actions.append(
+                                {
+                                    "pod": ref,
+                                    "action": "cni0_reset",
+                                    "node": node,
+                                    "events": issue.get("events", []),
+                                }
+                            )
+                        else:
+                            failed.append(ref)
+                            actions.append(
+                                {
+                                    "pod": ref,
+                                    "action": "cni0_reset_failed",
+                                    "node": node,
+                                    "events": issue.get("events", []),
+                                }
+                            )
+                    elif node in cni0_fixed_nodes:
+                        fixed.append(ref)
+                        actions.append(
+                            {
+                                "pod": ref,
+                                "action": "cni0_reset",
+                                "node": node,
+                                "events": issue.get("events", []),
+                            }
+                        )
+                    else:
+                        actions.append(
+                            {
+                                "pod": ref,
+                                "action": "diagnosed_only",
+                                "pending_category": issue.get("pending_category"),
+                                "scheduling_message": issue.get("scheduling_message"),
+                                "events": issue.get("events", []),
+                            }
+                        )
+                    continue
                 if self._tekton_scheduling_stuck(issue) and self._unstick_tekton_pending(
                     issue
                 ):
@@ -297,7 +350,15 @@ class PodCheck(BaseCheck):
             age_sec = self._age_seconds(meta.get("creationTimestamp"), now)
             events = self._pod_events(ns, name)
             disk_pressure_pending = self._events_indicate_disk_pressure(events)
-            if age_sec >= PENDING_MAX_SEC or disk_pressure_pending:
+            cni0_mismatch = self._events_indicate_cni0_mismatch(events)
+            pending_threshold = (
+                0 if cni0_mismatch else PENDING_MAX_SEC
+            )
+            if (
+                age_sec >= pending_threshold
+                or disk_pressure_pending
+                or cni0_mismatch
+            ):
                 pending_diag = self._pending_diagnostics(pod, events)
                 issue = self._issue(
                     pod,
@@ -305,12 +366,17 @@ class PodCheck(BaseCheck):
                     age_sec=age_sec,
                     needs_gitops=False,
                     extra={
+                        "node": pod.get("spec", {}).get("nodeName"),
                         "events": events,
                         "disk_pressure_pending": disk_pressure_pending,
                         **pending_diag,
                     },
                 )
-                issue["needs_gitops"] = classify_issue_gitops(issue)
+                if pending_diag.get("pending_category") == "cni0_mismatch":
+                    issue["auto_fixable"] = True
+                    issue["needs_gitops"] = False
+                else:
+                    issue["needs_gitops"] = classify_issue_gitops(issue)
         elif phase == "Failed":
             reason = status.get("reason") or ""
             message = status.get("message") or ""
@@ -727,6 +793,8 @@ class PodCheck(BaseCheck):
         reason = str(diag.get("scheduling_reason") or "").lower()
         combined = f"{joined} {msg} {reason}"
 
+        if any(marker in combined for marker in CNI0_SANDBOX_MARKERS):
+            return "cni0_mismatch"
         if "disk-pressure" in combined or "disk pressure" in combined:
             return "disk_pressure"
         if "didn't match pod's node affinity" in combined or "node affinity" in combined:
@@ -786,6 +854,65 @@ class PodCheck(BaseCheck):
         if ok:
             self.logger.info("Force deleted terminating pod %s/%s", namespace, name)
         return ok
+
+    @staticmethod
+    def _events_indicate_cni0_mismatch(events: list[str]) -> bool:
+        combined = " ".join(events).lower()
+        return any(marker in combined for marker in CNI0_SANDBOX_MARKERS)
+
+    @staticmethod
+    def _cni0_issue_node(issue: dict[str, Any]) -> str | None:
+        node = issue.get("node")
+        if node:
+            return str(node)
+        selector = issue.get("node_selector") or {}
+        hostname = selector.get("kubernetes.io/hostname")
+        if hostname:
+            return str(hostname)
+        return None
+
+    def _fix_cni0_mismatch(self, node: str) -> bool:
+        infra_root = Path(
+            os.getenv("SENTINEL_INFRA_ROOT", "/workspace/infra-bootstrap")
+        )
+        script = Path(
+            os.getenv(
+                "SENTINEL_CNI0_FIX_SCRIPT",
+                str(infra_root / "scripts/sentinel/fixes/fix-cni0-ip-mismatch.sh"),
+            )
+        )
+        if not script.is_file():
+            self.logger.warning("cni0 fix script not found: %s", script)
+            return False
+
+        env = os.environ.copy()
+        env["NODE"] = node
+        env.setdefault("CORDON", "1")
+        env.setdefault("DELETE_STUCK_PODS", "1")
+        env.setdefault("RESTART_FLANNEL", "1")
+        if os.getenv("SENTINEL_CNI0_AUTOFIX", "1") == "1":
+            env.setdefault("UNCORDON", "0")
+            env.setdefault("SENTINEL_MODE", "1")
+
+        proc = subprocess.run(
+            ["bash", str(script)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600,
+            env=env,
+            cwd=str(infra_root),
+        )
+        if proc.returncode != 0:
+            self.logger.warning(
+                "cni0 fix failed for node %s (rc=%s): %s",
+                node,
+                proc.returncode,
+                proc.stderr[-500:],
+            )
+            return False
+        self.logger.info("Reset cni0 bridge on node %s", node)
+        return True
 
     @staticmethod
     def _tekton_scheduling_stuck(issue: dict[str, Any]) -> bool:
