@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.15] - 2026-09-06
+
+### Fixed
+
+- `fix-containerd-cri` Ansible playbook now creates `certs.d` directories before
+  writing `hosts.toml` (fixes rc=2 on worker3: destination directory does not exist)
+
 ## [0.2.14] - 2026-07-18
 
 ### Fixed
