@@ -53,6 +53,17 @@ class ComponentsCheckTests(unittest.TestCase):
     def test_succeeded_phase_is_healthy(self) -> None:
         self.assertIsNone(self.check._pod_problem(_pod(phase="Succeeded", ready=False)))
 
+    def test_disk_pressure_evicted_is_healthy(self) -> None:
+        pod = {
+            "metadata": {"name": "speaker-x", "namespace": "metallb-system"},
+            "status": {
+                "phase": "Failed",
+                "reason": "Evicted",
+                "message": "Pod was rejected: The node had condition: [DiskPressure]. ",
+            },
+        }
+        self.assertIsNone(self.check._pod_problem(pod))
+
 
 if __name__ == "__main__":
     unittest.main()

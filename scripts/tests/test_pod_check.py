@@ -87,6 +87,10 @@ class PodCheckPendingDiagnosticsTests(unittest.TestCase):
         self.assertEqual(diag["pvc_claims"], ["vpn-data"])
         self.assertIn("affinity", diag["scheduling_message"])
 
+    def test_is_disk_eviction_diskpressure_brackets(self) -> None:
+        message = "Pod was rejected: The node had condition: [DiskPressure]. "
+        self.assertTrue(PodCheck._is_disk_eviction(message))
+
 
 if __name__ == "__main__":
     unittest.main()

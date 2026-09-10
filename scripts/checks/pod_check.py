@@ -32,6 +32,7 @@ PROBLEM_REASONS = frozenset(
 
 DISK_EVICTION_MARKERS = (
     "disk pressure",
+    "diskpressure",
     "ephemeral",
     "nodefs",
     "imagefs",
@@ -676,6 +677,9 @@ class PodCheck(BaseCheck):
     @staticmethod
     def _is_disk_eviction(message: str) -> bool:
         lowered = message.lower()
+        normalized = lowered.replace("_", "").replace(" ", "")
+        if any(marker.replace(" ", "") in normalized for marker in DISK_EVICTION_MARKERS):
+            return True
         return any(marker in lowered for marker in DISK_EVICTION_MARKERS)
 
     @staticmethod

@@ -231,6 +231,8 @@ class ComponentsCheck(BaseCheck):
         phase = status.get("phase", "")
         if phase == "Succeeded":
             return None
+        if phase == "Failed" and self._disk_pressure_eviction(status):
+            return None
         if phase != "Running":
             return f"Pod phase: {phase}"
 
@@ -251,6 +253,16 @@ class ComponentsCheck(BaseCheck):
         ):
             return "Container not ready"
         return None
+
+    @staticmethod
+    def _disk_pressure_eviction(status: dict[str, Any]) -> bool:
+        """Evicted because the node had DiskPressure — handled by disk module."""
+        reason = status.get("reason", "")
+        message = (status.get("message") or "").lower()
+        normalized = message.replace("_", "").replace(" ", "")
+        if reason == "Evicted" and "diskpressure" in normalized:
+            return True
+        return "diskpressure" in normalized and "node had condition" in message
 
     def _restart_pod(
         self, namespace: str, pod_name: str, pod_info: dict[str, Any]
