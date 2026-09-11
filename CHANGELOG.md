@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.15] - 2026-09-11
+
+### Fixed
+
+- `components` ignores DaemonSet pods evicted due to node `DiskPressure` (symptom of disk module)
+- `pods` treats `[DiskPressure]` rejection messages as disk-related evictions
+
 ## [0.2.14] - 2026-07-18
 
 ### Fixed
