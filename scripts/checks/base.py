@@ -4,11 +4,11 @@ K8s Sentinel - 檢查模組基礎類
 定義所有檢查模組的統一介面
 """
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
 from datetime import datetime
-import logging
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 

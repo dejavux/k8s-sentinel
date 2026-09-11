@@ -75,6 +75,12 @@ gitops:
   gitCommitterName: K8s Sentinel Bot
   gitCommitterEmail: sentinel@example.local
   nodeOptions: "--max-old-space-size=1024"
+  # inline = in-pod cloud SDK (legacy); queue = SSH enqueue to delta local consumer
+  dispatch: inline
+  queueHost: ""
+  queueDir: /mnt/volume1/nfs-models/sentinel-gitops/pending
+  queueUser: light0
+  queueSshKey: /root/.ssh/id_rsa
 
 registry:
   endpoint: ""

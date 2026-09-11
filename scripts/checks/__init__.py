@@ -2,7 +2,7 @@
 K8s Sentinel - 檢查模組
 """
 
-from .base import BaseCheck, CheckResult, FixResult, CheckRegistry
+from .base import BaseCheck, CheckRegistry, CheckResult, FixResult
 
 __all__ = [
     "BaseCheck",
